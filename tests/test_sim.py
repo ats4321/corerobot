@@ -110,3 +110,24 @@ def test_place_on_point(env):
     r = robot.place("green_block", (0.36, -0.12))  # free table spot for seed 0
     assert_result(r)
     assert r["ok"], r
+
+
+def test_arm_home_and_view_clear_after_place(env):
+    import pybullet as p
+
+    from core_robot.sim.env import CAMERAS, WORKSPACE_X
+
+    env.reset(0)
+    robot = Robot(env)
+    robot.pick("red_block")
+    assert robot.place("red_block", "red_bin")["ok"]
+    # Every arm link is behind the near edge of the object workspace.
+    for link in range(-1, 12):
+        assert p.getAABB(env.robot, link, physicsClientId=env.cid)[1][0] < WORKSPACE_X[0]
+    # A ray from the overhead camera to each object's top hits that object first, not the arm.
+    eye = CAMERAS["overhead"]["eye"]
+    for name, body in env.bodies.items():
+        lo, hi = env.aabb(name)
+        top = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, hi[2] - 0.002]
+        hit = p.rayTest(eye, top, physicsClientId=env.cid)[0][0]
+        assert hit != env.robot, f"arm blocks overhead view of {name}"

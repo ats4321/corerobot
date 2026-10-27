@@ -21,7 +21,9 @@ Target = Union[str, tuple[float, float], list[float]]
 EE_LINK = 11  # panda_grasptarget: the point between the fingertips
 FINGERS = (9, 10)
 ARM_JOINTS = list(range(7))
-HOME_JOINTS = [0.0, -0.3, 0.0, -2.2, 0.0, 2.0, math.pi / 4]
+# Tucked toward the base: every arm link stays at x < 0.3, clear of the object workspace,
+# so the overhead camera sees the whole scene when the arm is home.
+HOME_JOINTS = [0.0, -1.5, 0.0, -2.95, 0.0, 1.6, math.pi / 4]
 LOWER = [-2.9, -1.8, -2.9, -3.0, -2.9, -0.08, -2.9]
 UPPER = [2.9, 1.8, 2.9, -0.07, 2.9, 3.8, 2.9]
 RANGES = [u - l for l, u in zip(LOWER, UPPER)]
@@ -110,7 +112,8 @@ class Robot:
                 point sets it on the table there.
 
         Lifts to a safe carry height, moves above the target, lowers the object to just
-        above the target surface, opens the gripper, and retreats upward.
+        above the target surface, opens the gripper, retreats upward, and returns the
+        arm to its home pose near the robot base, leaving the table in clear view.
 
         Returns:
             {"ok": True, "details": {"object_position": [x, y, z], "on_target": True}} when
@@ -238,7 +241,8 @@ class Robot:
         self._set_fingers(0.04)
         self.env.step(int(0.3 * SIM_HZ))
         self._move_to([x, y, max(release_z + 0.1, top + HOVER_CLEARANCE)], orn)
-        self.env.step(int(0.5 * SIM_HZ))
+        self._go_home()
+        self.env.step(int(0.3 * SIM_HZ))
         final = self.env.scene_state()[obj]["position"]
         on = self._on_target(obj, final, x, y, name, kind)
         details = dict(object_position=_r(final), on_target=on, target_xy=_r([x, y]))
@@ -296,6 +300,17 @@ class Robot:
             self.env.robot, list(FINGERS), p.POSITION_CONTROL, targetPositions=[width_each] * 2,
             forces=[40, 40], physicsClientId=self.env.cid,
         )
+
+    def _go_home(self, seconds: float = 1.5):
+        """Joint-space move to HOME_JOINTS (smooth, so recorded video stays continuous)."""
+        c = self.env.cid
+        start = np.array([p.getJointState(self.env.robot, j, physicsClientId=c)[0] for j in ARM_JOINTS])
+        goal = np.array(HOME_JOINTS)
+        n = int(seconds * SIM_HZ)
+        for i in range(1, n + 1):
+            self._hold_arm(start + (goal - start) * i / n)
+            self.env.step()
+        self.env.step(int(0.3 * SIM_HZ))
 
     def _hold_arm(self, q):
         p.setJointMotorControlArray(
