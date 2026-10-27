@@ -9,3 +9,4 @@ imageio
 imageio-ffmpeg
 matplotlib
 pytest
+gradio
