@@ -1,0 +1,6 @@
+openai
+pybullet
+numpy
+opencv-python
+pillow
+pytest

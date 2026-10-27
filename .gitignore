@@ -1,0 +1,14 @@
+# Secrets
+.env
+
+# Generated data (keep the directories)
+data/cache/*
+!data/cache/.gitkeep
+data/runs/*
+!data/runs/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
