@@ -1,6 +1,9 @@
-openai
+httpx
+python-dotenv
 pybullet
 numpy
 opencv-python
 pillow
+imageio
+imageio-ffmpeg
 pytest
