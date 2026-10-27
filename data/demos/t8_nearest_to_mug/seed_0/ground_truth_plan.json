@@ -31,7 +31,8 @@
       "index": 0,
       "action": "pick_and_place",
       "object": "blue_block",
-      "destination": "red_bin"
+      "destination": "red_bin",
+      "note": "the block nearest the mug"
     }
   ],
   "goal": [

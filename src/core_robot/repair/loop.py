@@ -53,7 +53,7 @@ def run_with_repair(
     out.mkdir(parents=True, exist_ok=True)
     log = {
         "task_id": task.id, "condition": condition, "exec_seed": exec_seed,
-        "plan": plan.model_dump(), "success": False, "attempts_used": 0, "attempts": [],
+        "plan": plan.model_dump(exclude_none=True), "success": False, "attempts_used": 0, "attempts": [],
     }
     feedback = image_path = None
     for attempt in range(1, MAX_ATTEMPTS[condition] + 1):

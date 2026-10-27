@@ -19,7 +19,7 @@ from core_robot.verify.relations import check_success
 MAX_LAYOUT_TRIES = 200
 FT = FREE_TABLE_SPACE
 
-StepsFn = Callable[[dict], list[tuple[str, str]]]
+StepsFn = Callable[[dict], list[tuple]]  # (object, destination) or (object, destination, note)
 GoalFn = Callable[[dict], list[tuple[str, str, str]]]
 
 
@@ -29,7 +29,7 @@ class Task:
     title: str
     instruction: str
     objects: tuple[str, ...]
-    steps: StepsFn  # scene -> [(object, destination)]
+    steps: StepsFn  # scene -> [(object, destination[, note])]
     goal: GoalFn  # scene -> [(subject, relation, target)]
     accept: Callable[[dict], bool] = lambda scene: True  # extra layout constraint
 
@@ -49,8 +49,9 @@ class Task:
         return Plan(
             objects=[PlanObject(name=n, color=v["color"], kind=v["kind"]) for n, v in scene.items()],
             steps=[
-                Step(index=i, action="pick_and_place", object=o, destination=d)
-                for i, (o, d) in enumerate(self.steps(scene))
+                Step(index=i, action="pick_and_place", object=s[0], destination=s[1],
+                     note=s[2] if len(s) > 2 else None)
+                for i, s in enumerate(self.steps(scene))
             ],
             goal=[GoalAtom(subject=s, relation=r, target=t) for s, r, t in self.goal(scene)],
         )
@@ -139,7 +140,7 @@ TASKS: list[Task] = [
         title="Put the block nearest the mug into the bin",
         instruction="Put the block that is closest to the mug into the red bin.",
         objects=("red_block", "green_block", "blue_block", "mug", "red_bin"),
-        steps=lambda s: [(blocks_by_mug_distance(s)[0][1], "red_bin")],
+        steps=lambda s: [(blocks_by_mug_distance(s)[0][1], "red_bin", "the block nearest the mug")],
         goal=lambda s: [(blocks_by_mug_distance(s)[0][1], "in", "red_bin")],
         accept=_nearest_clear_by(0.05),
     ),

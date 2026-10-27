@@ -82,7 +82,7 @@ def line_up_spots(scene: dict, order: list[str]) -> list[tuple[float, float]]:
 
 def concrete_targets(task: Task, scene: dict) -> list:
     """Per-step place targets: object names, or (x, y) for free_table_space steps."""
-    steps = task.steps(scene)
+    steps = [(s.object, s.destination) for s in task.ground_truth_plan(scene).steps]
     if task.id == "t5_line_up":
         spots = iter(line_up_spots(scene, [o for o, _ in steps]))
         return [next(spots) if d == FREE_TABLE_SPACE else d for _, d in steps]
@@ -135,7 +135,7 @@ def run_demo(task: Task, seed: int, env: TabletopEnv, out_dir: Path | None = Non
         "call_log": robot.call_log,
     }
     if out_dir is not None:
-        _dump(out_dir / "ground_truth_plan.json", plan.model_dump())
+        _dump(out_dir / "ground_truth_plan.json", plan.model_dump(exclude_none=True))
         _dump(out_dir / "initial_state.json", initial)
         _dump(out_dir / "final_state.json", final)
         _dump(out_dir / "result.json", result)

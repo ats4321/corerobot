@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from core_robot.sim.env import OBJECTS
 
 FREE_TABLE_SPACE = "free_table_space"
+NOTE_MAX_LEN = 120
 SIM_OBJECTS = {o.name: o for o in OBJECTS}
 RELATIONS = ("in", "on", "left_of", "right_of", "next_to", "swapped_with")
 Relation = Literal["in", "on", "left_of", "right_of", "next_to", "swapped_with"]
@@ -54,6 +55,10 @@ class Step(BaseModel):
     action: Literal["pick_and_place"]
     object: str
     destination: str  # an object name or "free_table_space"; coordinates are rejected
+    # Free text for choices that depend on a spatial relationship rather than object
+    # identity, e.g. "the block nearest the mug". Validation never inspects its content,
+    # and plan scoring ignores it (see Plan.scoring_view).
+    note: str | None = Field(default=None, max_length=NOTE_MAX_LEN)
 
     @field_validator("object")
     @classmethod
@@ -118,6 +123,17 @@ class Plan(BaseModel):
         missing = {o.name for o in self.objects} - set(scene_names)
         if missing:
             raise ValueError(f"plan names objects not in the scene: {sorted(missing)}")
+
+    def scoring_view(self) -> dict:
+        """The plan as compared by plan scoring: notes removed.
+
+        Any future plan scorer (predicted vs ground-truth plan) must compare scoring_view()
+        outputs, so free-text notes never affect a score.
+        """
+        d = self.model_dump()
+        for step in d["steps"]:
+            step.pop("note", None)
+        return d
 
     def moved_objects(self) -> set[str]:
         """Objects picked and placed by some step (the `object` of a step)."""

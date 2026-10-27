@@ -102,3 +102,15 @@ def test_exec_seeds_disjoint_from_demo_seeds():
     # Layout seeds derived by scene_builder (seed*1000 + k) never collide either.
     layouts = lambda seeds: {s * 1000 + k for s in seeds for k in range(MAX_LAYOUT_TRIES)}
     assert not layouts(exec_seeds(50)) & layouts(demo_seeds)
+
+
+def test_only_t8_ground_truth_has_note(env):
+    for task in TASKS:
+        plan = task.ground_truth_plan(task.scene_builder(env, 0))
+        notes = [s.note for s in plan.steps]
+        if task.id == "t8_nearest_to_mug":
+            assert notes == ["the block nearest the mug"]
+        else:
+            assert notes == [None] * len(notes)
+            saved = json.loads((demo_dir(task.id, 0) / "ground_truth_plan.json").read_text())
+            assert all("note" not in s for s in saved["steps"])
