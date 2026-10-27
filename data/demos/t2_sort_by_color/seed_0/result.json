@@ -1,0 +1,105 @@
+{
+  "task_id": "t2_sort_by_color",
+  "title": "Sort red and blue blocks into matching bins",
+  "instruction": "Put the red block in the red bin and the blue block in the blue bin.",
+  "seed": 0,
+  "layout_seed": 0,
+  "success": true,
+  "check": {
+    "success": true,
+    "goal": [
+      {
+        "atom": "red_block in red_bin",
+        "ok": true,
+        "detail": "offset from bin center (0.000, 0.000) m (max 0.07), height 0.026 m (rim 0.07)"
+      },
+      {
+        "atom": "blue_block in blue_bin",
+        "ok": true,
+        "detail": "offset from bin center (0.001, 0.000) m (max 0.07), height 0.026 m (rim 0.07)"
+      }
+    ],
+    "global_rule": []
+  },
+  "video_frames": 148,
+  "call_log": [
+    {
+      "primitive": "pick",
+      "args": {
+        "obj": "red_block"
+      },
+      "ok": true,
+      "reason": "",
+      "details": {
+        "held": "red_block",
+        "object_position": [
+          0.6276,
+          -0.3283,
+          0.2702
+        ]
+      },
+      "sim_time": 3.721
+    },
+    {
+      "primitive": "place",
+      "args": {
+        "obj": "red_block",
+        "target": "red_bin"
+      },
+      "ok": true,
+      "reason": "",
+      "details": {
+        "object_position": [
+          0.5502,
+          -0.1244,
+          0.026
+        ],
+        "on_target": true,
+        "target_xy": [
+          0.5501,
+          -0.1243
+        ]
+      },
+      "sim_time": 8.05
+    },
+    {
+      "primitive": "pick",
+      "args": {
+        "obj": "blue_block"
+      },
+      "ok": true,
+      "reason": "",
+      "details": {
+        "held": "blue_block",
+        "object_position": [
+          0.3613,
+          0.1516,
+          0.2705
+        ]
+      },
+      "sim_time": 10.287
+    },
+    {
+      "primitive": "place",
+      "args": {
+        "obj": "blue_block",
+        "target": "blue_bin"
+      },
+      "ok": true,
+      "reason": "",
+      "details": {
+        "object_position": [
+          0.5883,
+          0.2229,
+          0.026
+        ],
+        "on_target": true,
+        "target_xy": [
+          0.5889,
+          0.2229
+        ]
+      },
+      "sim_time": 14.667
+    }
+  ]
+}

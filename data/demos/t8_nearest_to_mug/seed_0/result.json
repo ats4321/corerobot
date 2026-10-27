@@ -1,0 +1,72 @@
+{
+  "task_id": "t8_nearest_to_mug",
+  "title": "Put the block nearest the mug into the bin",
+  "instruction": "Put the block that is closest to the mug into the red bin.",
+  "seed": 0,
+  "layout_seed": 0,
+  "success": true,
+  "check": {
+    "success": true,
+    "goal": [
+      {
+        "atom": "blue_block in red_bin",
+        "ok": true,
+        "detail": "offset from bin center (0.000, 0.000) m (max 0.07), height 0.026 m (rim 0.07)"
+      }
+    ],
+    "global_rule": [
+      {
+        "block": "red_block",
+        "ok": true,
+        "detail": "red_block moved 0.000 m (max 0.02)"
+      },
+      {
+        "block": "green_block",
+        "ok": true,
+        "detail": "green_block moved 0.000 m (max 0.02)"
+      }
+    ]
+  },
+  "video_frames": 82,
+  "call_log": [
+    {
+      "primitive": "pick",
+      "args": {
+        "obj": "blue_block"
+      },
+      "ok": true,
+      "reason": "",
+      "details": {
+        "held": "blue_block",
+        "object_position": [
+          0.6276,
+          -0.3283,
+          0.2702
+        ]
+      },
+      "sim_time": 3.721
+    },
+    {
+      "primitive": "place",
+      "args": {
+        "obj": "blue_block",
+        "target": "red_bin"
+      },
+      "ok": true,
+      "reason": "",
+      "details": {
+        "object_position": [
+          0.5502,
+          -0.1244,
+          0.026
+        ],
+        "on_target": true,
+        "target_xy": [
+          0.5501,
+          -0.1243
+        ]
+      },
+      "sim_time": 8.05
+    }
+  ]
+}

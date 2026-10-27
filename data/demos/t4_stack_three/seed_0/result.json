@@ -1,0 +1,105 @@
+{
+  "task_id": "t4_stack_three",
+  "title": "Stack three blocks: blue on green on red",
+  "instruction": "Build a tower: green on red, then blue on green.",
+  "seed": 0,
+  "layout_seed": 0,
+  "success": true,
+  "check": {
+    "success": true,
+    "goal": [
+      {
+        "atom": "green_block on red_block",
+        "ok": true,
+        "detail": "horizontal offset 0.000 m (max 0.02), bottom-to-top gap -0.000 m (max \u00b10.015)"
+      },
+      {
+        "atom": "blue_block on green_block",
+        "ok": true,
+        "detail": "horizontal offset 0.000 m (max 0.02), bottom-to-top gap -0.000 m (max \u00b10.015)"
+      }
+    ],
+    "global_rule": []
+  },
+  "video_frames": 143,
+  "call_log": [
+    {
+      "primitive": "pick",
+      "args": {
+        "obj": "green_block"
+      },
+      "ok": true,
+      "reason": "",
+      "details": {
+        "held": "green_block",
+        "object_position": [
+          0.3559,
+          0.2069,
+          0.2704
+        ]
+      },
+      "sim_time": 3.217
+    },
+    {
+      "primitive": "place",
+      "args": {
+        "obj": "green_block",
+        "target": "red_block"
+      },
+      "ok": true,
+      "reason": "",
+      "details": {
+        "object_position": [
+          0.5665,
+          -0.1519,
+          0.06
+        ],
+        "on_target": true,
+        "target_xy": [
+          0.5666,
+          -0.1519
+        ]
+      },
+      "sim_time": 7.679
+    },
+    {
+      "primitive": "pick",
+      "args": {
+        "obj": "blue_block"
+      },
+      "ok": true,
+      "reason": "",
+      "details": {
+        "held": "blue_block",
+        "object_position": [
+          0.5565,
+          0.1516,
+          0.2702
+        ]
+      },
+      "sim_time": 10.175
+    },
+    {
+      "primitive": "place",
+      "args": {
+        "obj": "blue_block",
+        "target": "green_block"
+      },
+      "ok": true,
+      "reason": "",
+      "details": {
+        "object_position": [
+          0.5667,
+          -0.1519,
+          0.1
+        ],
+        "on_target": true,
+        "target_xy": [
+          0.5665,
+          -0.1519
+        ]
+      },
+      "sim_time": 14.246
+    }
+  ]
+}

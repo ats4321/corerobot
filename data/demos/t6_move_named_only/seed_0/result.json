@@ -1,0 +1,72 @@
+{
+  "task_id": "t6_move_named_only",
+  "title": "Move only the green block into the blue bin",
+  "instruction": "Put the green block in the blue bin. Leave the other blocks where they are.",
+  "seed": 0,
+  "layout_seed": 0,
+  "success": true,
+  "check": {
+    "success": true,
+    "goal": [
+      {
+        "atom": "green_block in blue_bin",
+        "ok": true,
+        "detail": "offset from bin center (0.000, 0.000) m (max 0.07), height 0.026 m (rim 0.07)"
+      }
+    ],
+    "global_rule": [
+      {
+        "block": "red_block",
+        "ok": true,
+        "detail": "red_block moved 0.000 m (max 0.02)"
+      },
+      {
+        "block": "yellow_block",
+        "ok": true,
+        "detail": "yellow_block moved 0.000 m (max 0.02)"
+      }
+    ]
+  },
+  "video_frames": 80,
+  "call_log": [
+    {
+      "primitive": "pick",
+      "args": {
+        "obj": "green_block"
+      },
+      "ok": true,
+      "reason": "",
+      "details": {
+        "held": "green_block",
+        "object_position": [
+          0.6606,
+          0.0704,
+          0.2702
+        ]
+      },
+      "sim_time": 3.592
+    },
+    {
+      "primitive": "place",
+      "args": {
+        "obj": "green_block",
+        "target": "blue_bin"
+      },
+      "ok": true,
+      "reason": "",
+      "details": {
+        "object_position": [
+          0.5502,
+          -0.1242,
+          0.026
+        ],
+        "on_target": true,
+        "target_xy": [
+          0.5501,
+          -0.1243
+        ]
+      },
+      "sim_time": 7.933
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 httpx
 python-dotenv
+pydantic
 pybullet
 numpy
 opencv-python

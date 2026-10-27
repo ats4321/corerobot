@@ -1,0 +1,39 @@
+{
+  "objects": [
+    {
+      "name": "red_block",
+      "color": "red",
+      "kind": "block"
+    },
+    {
+      "name": "green_block",
+      "color": "green",
+      "kind": "block"
+    },
+    {
+      "name": "blue_block",
+      "color": "blue",
+      "kind": "block"
+    },
+    {
+      "name": "yellow_block",
+      "color": "yellow",
+      "kind": "block"
+    }
+  ],
+  "steps": [
+    {
+      "index": 0,
+      "action": "pick_and_place",
+      "object": "green_block",
+      "destination": "red_block"
+    }
+  ],
+  "goal": [
+    {
+      "subject": "green_block",
+      "relation": "on",
+      "target": "red_block"
+    }
+  ]
+}

@@ -80,10 +80,18 @@ class TabletopEnv:
 
     # ---- lifecycle ----
 
-    def reset(self, seed: int) -> dict:
+    def reset(
+        self,
+        seed: int,
+        objects: list[str] | None = None,
+        fixed: dict[str, tuple[float, float]] | None = None,
+    ) -> dict:
         """Rebuild the scene with objects at seeded random, non-overlapping positions.
 
-        The same seed always yields the same layout. Returns scene_state().
+        objects: names to spawn (default: all of OBJECTS).
+        fixed: optional name -> (x, y) for objects pinned at a known spot (yaw 0);
+            the rest are sampled around them.
+        The same arguments always yield the same layout. Returns scene_state().
         """
         self.seed = seed
         rng = np.random.default_rng(seed)
@@ -98,12 +106,22 @@ class TabletopEnv:
         self._make_box([0.45, 0.0, -0.02], [0.55, 0.65, 0.02], (0.6, 0.45, 0.3, 1), mass=0)  # table
         self.robot = p.loadURDF("franka_panda/panda.urdf", [0, 0, 0], useFixedBase=True, physicsClientId=c)
 
-        placed: list[tuple[float, float, float]] = []
+        fixed = fixed or {}
+        wanted = set(objects) if objects is not None else set(self.specs)
+        unknown = (wanted | set(fixed)) - set(self.specs)
+        if unknown:
+            raise ValueError(f"unknown objects {sorted(unknown)}")
+        specs = [s for s in OBJECTS if s.name in wanted or s.name in fixed]
+        placed = [(x, y, self.specs[n].radius) for n, (x, y) in fixed.items()]
         self.bodies = {}
-        for spec in OBJECTS:
-            x, y = self._sample_xy(rng, spec.radius, placed)
-            placed.append((x, y, spec.radius))
-            yaw = float(rng.uniform(-math.pi / 4, math.pi / 4)) if spec.kind == "block" else 0.0
+        for spec in specs:
+            if spec.name in fixed:
+                x, y = fixed[spec.name]
+                yaw = 0.0
+            else:
+                x, y = self._sample_xy(rng, spec.radius, placed)
+                placed.append((x, y, spec.radius))
+                yaw = float(rng.uniform(-math.pi / 4, math.pi / 4)) if spec.kind == "block" else 0.0
             self.bodies[spec.name] = self._build(spec, x, y, yaw)
 
         self.sim_time = 0.0

@@ -1,0 +1,39 @@
+{
+  "objects": [
+    {
+      "name": "blue_bin",
+      "color": "blue",
+      "kind": "bin"
+    },
+    {
+      "name": "red_block",
+      "color": "red",
+      "kind": "block"
+    },
+    {
+      "name": "green_block",
+      "color": "green",
+      "kind": "block"
+    },
+    {
+      "name": "yellow_block",
+      "color": "yellow",
+      "kind": "block"
+    }
+  ],
+  "steps": [
+    {
+      "index": 0,
+      "action": "pick_and_place",
+      "object": "green_block",
+      "destination": "blue_bin"
+    }
+  ],
+  "goal": [
+    {
+      "subject": "green_block",
+      "relation": "in",
+      "target": "blue_bin"
+    }
+  ]
+}

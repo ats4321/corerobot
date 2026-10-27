@@ -1,0 +1,72 @@
+{
+  "task_id": "t3_stack_green_on_red",
+  "title": "Stack the green block on the red block",
+  "instruction": "Stack the green block on top of the red block.",
+  "seed": 0,
+  "layout_seed": 0,
+  "success": true,
+  "check": {
+    "success": true,
+    "goal": [
+      {
+        "atom": "green_block on red_block",
+        "ok": true,
+        "detail": "horizontal offset 0.000 m (max 0.02), bottom-to-top gap -0.000 m (max \u00b10.015)"
+      }
+    ],
+    "global_rule": [
+      {
+        "block": "blue_block",
+        "ok": true,
+        "detail": "blue_block moved 0.000 m (max 0.02)"
+      },
+      {
+        "block": "yellow_block",
+        "ok": true,
+        "detail": "yellow_block moved 0.000 m (max 0.02)"
+      }
+    ]
+  },
+  "video_frames": 78,
+  "call_log": [
+    {
+      "primitive": "pick",
+      "args": {
+        "obj": "green_block"
+      },
+      "ok": true,
+      "reason": "",
+      "details": {
+        "held": "green_block",
+        "object_position": [
+          0.3559,
+          0.2069,
+          0.2704
+        ]
+      },
+      "sim_time": 3.217
+    },
+    {
+      "primitive": "place",
+      "args": {
+        "obj": "green_block",
+        "target": "red_block"
+      },
+      "ok": true,
+      "reason": "",
+      "details": {
+        "object_position": [
+          0.5665,
+          -0.1519,
+          0.06
+        ],
+        "on_target": true,
+        "target_xy": [
+          0.5666,
+          -0.1519
+        ]
+      },
+      "sim_time": 7.679
+    }
+  ]
+}

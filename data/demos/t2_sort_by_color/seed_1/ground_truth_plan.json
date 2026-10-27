@@ -1,0 +1,50 @@
+{
+  "objects": [
+    {
+      "name": "red_bin",
+      "color": "red",
+      "kind": "bin"
+    },
+    {
+      "name": "blue_bin",
+      "color": "blue",
+      "kind": "bin"
+    },
+    {
+      "name": "red_block",
+      "color": "red",
+      "kind": "block"
+    },
+    {
+      "name": "blue_block",
+      "color": "blue",
+      "kind": "block"
+    }
+  ],
+  "steps": [
+    {
+      "index": 0,
+      "action": "pick_and_place",
+      "object": "red_block",
+      "destination": "red_bin"
+    },
+    {
+      "index": 1,
+      "action": "pick_and_place",
+      "object": "blue_block",
+      "destination": "blue_bin"
+    }
+  ],
+  "goal": [
+    {
+      "subject": "red_block",
+      "relation": "in",
+      "target": "red_bin"
+    },
+    {
+      "subject": "blue_block",
+      "relation": "in",
+      "target": "blue_bin"
+    }
+  ]
+}

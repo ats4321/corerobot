@@ -1,0 +1,34 @@
+{
+  "objects": [
+    {
+      "name": "red_bin",
+      "color": "red",
+      "kind": "bin"
+    },
+    {
+      "name": "blue_bin",
+      "color": "blue",
+      "kind": "bin"
+    },
+    {
+      "name": "red_block",
+      "color": "red",
+      "kind": "block"
+    }
+  ],
+  "steps": [
+    {
+      "index": 0,
+      "action": "pick_and_place",
+      "object": "red_block",
+      "destination": "red_bin"
+    }
+  ],
+  "goal": [
+    {
+      "subject": "red_block",
+      "relation": "in",
+      "target": "red_bin"
+    }
+  ]
+}

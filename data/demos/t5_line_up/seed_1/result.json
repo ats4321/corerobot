@@ -1,0 +1,153 @@
+{
+  "task_id": "t5_line_up",
+  "title": "Line up red, green, blue from left to right",
+  "instruction": "Line up the red, green and blue blocks in a row, left to right.",
+  "seed": 1,
+  "layout_seed": 1000,
+  "success": true,
+  "check": {
+    "success": true,
+    "goal": [
+      {
+        "atom": "red_block left_of green_block",
+        "ok": true,
+        "detail": "lateral margin +0.100 m (min 0.03), front-back offset 0.000 m (max 0.15)"
+      },
+      {
+        "atom": "green_block left_of blue_block",
+        "ok": true,
+        "detail": "lateral margin +0.100 m (min 0.03), front-back offset 0.000 m (max 0.15)"
+      }
+    ],
+    "global_rule": []
+  },
+  "video_frames": 202,
+  "call_log": [
+    {
+      "primitive": "pick",
+      "args": {
+        "obj": "red_block"
+      },
+      "ok": true,
+      "reason": "",
+      "details": {
+        "held": "red_block",
+        "object_position": [
+          0.5275,
+          0.0686,
+          0.2705
+        ]
+      },
+      "sim_time": 3.358
+    },
+    {
+      "primitive": "place",
+      "args": {
+        "obj": "red_block",
+        "target": [
+          0.5000000000000001,
+          0.10000000000000028
+        ]
+      },
+      "ok": true,
+      "reason": "",
+      "details": {
+        "object_position": [
+          0.5,
+          0.1001,
+          0.02
+        ],
+        "on_target": true,
+        "target_xy": [
+          0.5,
+          0.1
+        ]
+      },
+      "sim_time": 7.221
+    },
+    {
+      "primitive": "pick",
+      "args": {
+        "obj": "green_block"
+      },
+      "ok": true,
+      "reason": "",
+      "details": {
+        "held": "green_block",
+        "object_position": [
+          0.4194,
+          0.0189,
+          0.2704
+        ]
+      },
+      "sim_time": 9.437
+    },
+    {
+      "primitive": "place",
+      "args": {
+        "obj": "green_block",
+        "target": [
+          0.5000000000000001,
+          2.7755575615628914e-16
+        ]
+      },
+      "ok": true,
+      "reason": "",
+      "details": {
+        "object_position": [
+          0.4999,
+          -0.0001,
+          0.02
+        ],
+        "on_target": true,
+        "target_xy": [
+          0.5,
+          0.0
+        ]
+      },
+      "sim_time": 13.392
+    },
+    {
+      "primitive": "pick",
+      "args": {
+        "obj": "blue_block"
+      },
+      "ok": true,
+      "reason": "",
+      "details": {
+        "held": "blue_block",
+        "object_position": [
+          0.446,
+          0.1677,
+          0.2704
+        ]
+      },
+      "sim_time": 15.729
+    },
+    {
+      "primitive": "place",
+      "args": {
+        "obj": "blue_block",
+        "target": [
+          0.5000000000000001,
+          -0.09999999999999973
+        ]
+      },
+      "ok": true,
+      "reason": "",
+      "details": {
+        "object_position": [
+          0.4999,
+          -0.0999,
+          0.02
+        ],
+        "on_target": true,
+        "target_xy": [
+          0.5,
+          -0.1
+        ]
+      },
+      "sim_time": 20.067
+    }
+  ]
+}

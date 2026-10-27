@@ -1,0 +1,51 @@
+{
+  "objects": [
+    {
+      "name": "red_block",
+      "color": "red",
+      "kind": "block"
+    },
+    {
+      "name": "green_block",
+      "color": "green",
+      "kind": "block"
+    },
+    {
+      "name": "blue_block",
+      "color": "blue",
+      "kind": "block"
+    }
+  ],
+  "steps": [
+    {
+      "index": 0,
+      "action": "pick_and_place",
+      "object": "red_block",
+      "destination": "free_table_space"
+    },
+    {
+      "index": 1,
+      "action": "pick_and_place",
+      "object": "green_block",
+      "destination": "free_table_space"
+    },
+    {
+      "index": 2,
+      "action": "pick_and_place",
+      "object": "blue_block",
+      "destination": "free_table_space"
+    }
+  ],
+  "goal": [
+    {
+      "subject": "red_block",
+      "relation": "left_of",
+      "target": "green_block"
+    },
+    {
+      "subject": "green_block",
+      "relation": "left_of",
+      "target": "blue_block"
+    }
+  ]
+}
