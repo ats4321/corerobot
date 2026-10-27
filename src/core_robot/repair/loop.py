@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Protocol
 
 from core_robot.codegen.sandbox import DEFAULT_TIMEOUT_S, run_code
+from core_robot.codegen.scene import exec_initial_state, read_only_scene
 from core_robot.config import RUNS_DIR
 from core_robot.planning.schema import Plan
 from core_robot.sim.env import DEMO_CAMERA
@@ -32,7 +33,7 @@ MAX_ATTEMPTS = {"A": 1, "B": 3, "C": 3}
 class GenerateFn(Protocol):
     """Returns the code as a string, or {"code": str, "tokens_in": int, "tokens_out": int}."""
 
-    def __call__(self, *, task, plan: Plan, attempt: int, feedback: str | None = None,
+    def __call__(self, *, task, plan: Plan, attempt: int, scene: dict, feedback: str | None = None,
                  image_path: str | None = None) -> str | dict: ...
 
 
@@ -71,10 +72,13 @@ def run_with_repair(
         "tokens_in": 0, "tokens_out": 0, "finished": False, **(meta or {}),
     }
     feedback = image_path = None
+    # The same read-only starting scene that run(robot, scene) receives in the sandbox.
+    scene = read_only_scene(exec_initial_state(task, exec_seed))
     for attempt in range(1, MAX_ATTEMPTS[condition] + 1):
         try:
             code, t_in, t_out = _normalize(
-                generate_fn(task=task, plan=plan, attempt=attempt, feedback=feedback, image_path=image_path)
+                generate_fn(task=task, plan=plan, attempt=attempt, scene=scene, feedback=feedback,
+                            image_path=image_path)
             )
         except Exception as e:  # generator/API/replay failure: a harness error, not the model's code
             log["attempts"].append({

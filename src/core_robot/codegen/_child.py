@@ -17,12 +17,12 @@ from pathlib import Path
 import imageio.v2 as imageio
 
 from core_robot.codegen.sandbox import SAFE_BUILTINS
+from core_robot.codegen.scene import build_exec_scene, read_only_scene
 from core_robot.demos.tasks import TASKS_BY_ID
-from core_robot.sim.env import DEMO_CAMERA, SIM_HZ, TabletopEnv
+from core_robot.sim.env import DEMO_CAMERA, SIM_HZ
 from core_robot.sim.primitives import Robot
 from core_robot.sim.render import Recorder
 
-SCENE_FIELDS = ("position", "orientation", "color", "kind")
 FRAME_CAMERAS = (DEMO_CAMERA, "side")
 
 
@@ -48,18 +48,10 @@ def make_robot_api(robot: Robot, calls_path: Path):
     return api_cls()
 
 
-def read_only_scene(state: dict) -> dict:
-    return {name: {k: copy.deepcopy(v[k]) for k in SCENE_FIELDS} for name, v in state.items()}
-
-
 def main(job_path: str) -> None:
     job = json.loads(Path(job_path).read_text())
     out = Path(job["out_dir"])
-    env = TabletopEnv()
-    TASKS_BY_ID[job["task_id"]].scene_builder(env, job["exec_seed"])
-    robot = Robot(env)
-    env.step(int(0.2 * SIM_HZ))
-    initial = env.scene_state()
+    env, robot, initial = build_exec_scene(TASKS_BY_ID[job["task_id"]], job["exec_seed"])
 
     safe = {name: getattr(builtins, name) for name in SAFE_BUILTINS}
     namespace = {"__builtins__": safe, "__name__": "generated"}

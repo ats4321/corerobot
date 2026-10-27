@@ -4,7 +4,8 @@
 
 Reads precomputed artifacts only: demos from data/demos/ and evaluation run logs from
 data/runs/eval/ (live) or data/runs/fake/ (fake generator, clearly labelled). Nothing here
-calls the Meta API; the live stages are stubs below, marked "STUB: live API".
+calls the Meta API unless "Replay from cache" is switched off, which runs live code
+generation (run_live). Perception and planning are still stubs, marked "STUB: live API".
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from core_robot.config import DATA_DIR, DEMOS_DIR, FAKE_RUNS_DIR, LIVE_RUNS_DIR, exec_seeds
+from core_robot.config import DATA_DIR, DEMOS_DIR, FAKE_RUNS_DIR, LIVE_RUNS_DIR, exec_seeds, load_settings
 from core_robot.demos.tasks import TASKS_BY_ID
 from core_robot.eval.report import FAKE_BANNER
 
@@ -20,8 +21,8 @@ MAX_ATTEMPTS_SHOWN = 3
 
 
 # ---------------------------------------------------------------- STUB: live API
-# These are the live pipeline stages. They are intentionally not implemented yet; the UI
-# shows their NotImplementedError on the page when "Replay from cache" is switched off.
+# Live perception and planning stages, not wired into the page yet. Live code generation
+# is wired: switching "Replay from cache" off runs run_live() below.
 
 def perceive_demo(video_path: str):
     """STUB: live API. SAM 3.1: segment and track the demo's objects."""
@@ -33,10 +34,29 @@ def plan_from_demo(video_path: str, masks):
     raise NotImplementedError("planning from video (Muse Spark) is not wired up yet; use 'Replay from cache'")
 
 
-def generate_code_live(plan, feedback=None, image_path=None):
-    """STUB: live API. Muse Spark: Plan -> run(robot, scene) code."""
-    raise NotImplementedError("live code generation (Muse Spark) is not wired up yet; use 'Replay from cache'")
 # ---------------------------------------------------------------- end STUB
+
+LIVE_UI_RUN_SET = "runs/eval/ui"
+
+
+def run_live(task_id: str, condition: str, seed: int) -> str | None:
+    """Live code generation (Muse Spark) for one repair run, using the ground-truth plan for
+    the execution layout. Writes a run log under data/runs/eval/ui/. Returns an error or None.
+    Costs real money (at most 3 generations); cached requests are free."""
+    from core_robot.codegen.muse_generator import MuseGenerator
+    from core_robot.codegen.scene import exec_initial_state
+    from core_robot.meta_client import MetaClient
+    from core_robot.repair.loop import run_with_repair
+
+    settings = load_settings()
+    if not settings.api_key and not settings.replay:
+        return "Live mode needs MODEL_API_KEY in .env (or CORE_ROBOT_REPLAY=1 to replay cached responses)."
+    task = TASKS_BY_ID[task_id]
+    plan = task.ground_truth_plan(exec_initial_state(task, seed))
+    out = DATA_DIR / LIVE_UI_RUN_SET / task_id / condition / f"seed_{seed}"
+    meta = {"run_source": "live", "plan_source": "ground_truth", "generator": "muse"}
+    run_with_repair(task, plan, seed, condition, MuseGenerator(MetaClient(settings=settings)), out_dir=out, meta=meta)
+    return None
 
 
 # ---- artifact loaders (pure functions; tested without a browser) ----
@@ -73,24 +93,27 @@ def load_demo(demo_id: str) -> dict:
 def load_run(run_set: str, task_id: str, condition: str, seed, replay: bool = True) -> dict:
     """{"error", "banner", "summary", "plan", "attempts": [{code, video, report, outcome}]}."""
     empty = {"error": None, "banner": "", "summary": "", "plan": None, "attempts": []}
-    if not replay:
-        try:
-            generate_code_live(None)
-        except NotImplementedError as e:
-            return {**empty, "error": f"Live mode: {e}"}
     try:
         seed = int(seed)
     except (TypeError, ValueError):
         return {**empty, "error": f"Execution seed must be an integer, got {seed!r}."}
     if seed not in exec_seeds():
         return {**empty, "error": f"Execution seed {seed} is not an evaluation seed; use one of {exec_seeds()}."}
-    if not run_set:
+    if not run_set and replay:
         return {**empty, "error": "No evaluation runs found. Run: python -m core_robot.eval.run_eval --generator fake"}
-    rs = Path(run_set)
-    if rs.is_absolute() or ".." in rs.parts or rs.parts[:1] != ("runs",):
+    rs = Path(run_set or "")
+    if replay and (rs.is_absolute() or ".." in rs.parts or rs.parts[:1] != ("runs",)):
         return {**empty, "error": f"Invalid run set: {run_set!r}"}
     if task_id not in TASKS_BY_ID or condition not in ("A", "B", "C"):
         return {**empty, "error": f"Unknown task or condition: {task_id!r}, {condition!r}"}
+    if not replay:
+        try:
+            err = run_live(task_id, condition, seed)
+        except Exception as e:  # API errors etc. are shown on the page
+            err = f"{type(e).__name__}: {e}"
+        if err:
+            return {**empty, "error": f"Live mode: {err}"}
+        run_set = LIVE_UI_RUN_SET
     path = DATA_DIR / run_set / task_id / condition / f"seed_{seed}" / "run.json"
     if not path.exists():
         return {**empty, "error": f"No run log for {task_id}, condition {condition}, seed {seed} in {run_set}."}

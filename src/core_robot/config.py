@@ -30,6 +30,10 @@ LIVE_RUNS_DIR = RUNS_DIR / "eval"
 # Muse Spark 1.3 standard-mode prices, USD per 1M tokens (dev.meta.ai/docs/pricing-rate-limits).
 PRICE_INPUT_PER_M = 1.25
 PRICE_OUTPUT_PER_M = 4.25
+# SAM 3.1: per image, and per video frame with a 50-frame minimum per video request.
+SAM_PRICE_PER_IMAGE = 2.50 / 1000
+SAM_PRICE_PER_FRAME = 0.20 / 1000
+SAM_MIN_FRAMES = 50
 
 # Execution (evaluation) seeds are disjoint from demonstration seeds (0, 1, ...), so a
 # robot is never evaluated on the exact layout it was shown.

@@ -20,6 +20,7 @@ import json
 import mimetypes
 import random
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -103,6 +104,14 @@ def data_url(path: Path) -> str:
     return f"data:{mime};base64,{base64.b64encode(path.read_bytes()).decode()}"
 
 
+def usage_tokens(response: dict) -> tuple[int, int]:
+    """(input, output) tokens from a Responses or Chat Completions usage block; (0, 0) if absent."""
+    u = (response or {}).get("usage") or {}
+    t_in = u.get("input_tokens", u.get("prompt_tokens", 0)) or 0
+    t_out = u.get("output_tokens", u.get("completion_tokens", 0)) or 0
+    return int(t_in), int(t_out)
+
+
 def output_text(response: dict) -> str:
     """Concatenate output_text parts from a Responses API response."""
     if isinstance(response.get("output_text"), str):
@@ -161,6 +170,7 @@ class MetaClient:
         self.settings.cache_dir.mkdir(parents=True, exist_ok=True)
         self.settings.log_path.parent.mkdir(parents=True, exist_ok=True)
         self._file_ids: dict[str, str] = {}
+        self._lock = threading.Lock()  # the client is shared by evaluation worker threads
 
     # ---- public API ----
 
@@ -178,7 +188,9 @@ class MetaClient:
         system: str | None = None,
         max_output_tokens: int | None = None,
     ) -> dict:
-        """Call Muse Spark via the Responses API. Returns {"text", "json"?, "raw"}.
+        """Call Muse Spark via the Responses API. Returns {"text", "raw", "usage": (in, out)}.
+
+        With a schema, also "json" (parsed, or None) and "json_error" (None, or why parsing failed).
 
         images: local image files, sent inline as base64 data URLs (input_image).
         video: a local .mp4, sent inline as a data URL (input_video, video_mode="inline")
@@ -202,9 +214,12 @@ class MetaClient:
         if max_output_tokens:
             body["max_output_tokens"] = max_output_tokens
         resp = self._responses(body)
-        out = {"text": output_text(resp), "raw": resp}
+        out = {"text": output_text(resp), "raw": resp, "usage": usage_tokens(resp)}
         if schema is not None:
-            out["json"] = json.loads(out["text"])
+            try:
+                out["json"], out["json_error"] = json.loads(out["text"]), None
+            except json.JSONDecodeError as e:
+                out["json"], out["json_error"] = None, f"invalid JSON: {e}"
         return out
 
     def sam_image(self, image: Path, prompt: str, metadata: dict | None = None) -> dict:
@@ -241,9 +256,12 @@ class MetaClient:
 
     def _upload(self, path: Path) -> str:
         digest = _sha256_file(path)
-        if digest not in self._file_ids:
+        with self._lock:
+            known = self._file_ids.get(digest)
+        if known is None:
             resp = self._send_with_retries(lambda: self._transport()("POST", "/files", None, path))
-            self._file_ids[digest] = resp["id"]
+            with self._lock:
+                self._file_ids[digest] = resp["id"]
         return self._file_ids[digest]
 
     def _transport(self) -> Transport:
@@ -269,7 +287,7 @@ class MetaClient:
             self._log(model, key, cache_hit=False, latency_s=time.monotonic() - t0, resp=None, error=str(e)[:500])
             raise
         latency = time.monotonic() - t0
-        tmp = path.with_suffix(".tmp")
+        tmp = path.with_suffix(f".{threading.get_ident()}.tmp")
         tmp.write_text(json.dumps({"request": logical, "response": resp}))
         tmp.replace(path)
         self._log(model, key, cache_hit=False, latency_s=latency, resp=resp)
@@ -301,7 +319,7 @@ class MetaClient:
         }
         if error:
             rec["error"] = error
-        with open(self.settings.log_path, "a") as f:
+        with self._lock, open(self.settings.log_path, "a") as f:
             f.write(json.dumps(rec) + "\n")
 
 

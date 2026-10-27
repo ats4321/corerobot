@@ -33,8 +33,8 @@ class FakeGenerator:
     def __init__(self):
         self.calls = []
 
-    def __call__(self, *, task, plan, attempt, feedback=None, image_path=None):
-        self.calls.append({"attempt": attempt, "feedback": feedback, "image_path": image_path})
+    def __call__(self, *, task, plan, attempt, scene=None, feedback=None, image_path=None):
+        self.calls.append({"attempt": attempt, "feedback": feedback, "image_path": image_path, "scene": scene})
         return WRONG if attempt == 1 else RIGHT
 
 
@@ -152,3 +152,13 @@ def test_report_on_timeout_has_no_state():
     assert not chk["success"] and chk["per_goal"][0]["error_cm"] is None
     text = build_failure_report(result, chk)
     assert "run timed out" in text and "Exception: timeout" in text and "not evaluated" in text
+
+
+def test_generator_gets_the_sandbox_starting_scene(runs):
+    log, gen = runs["B"]
+    scene = gen.calls[0]["scene"]
+    initial = log["attempts"][0]["initial_state"]
+    assert set(scene) == set(initial)
+    for name, v in scene.items():
+        assert set(v) == {"position", "orientation", "color", "kind"}
+        assert v["position"] == initial[name]["position"]

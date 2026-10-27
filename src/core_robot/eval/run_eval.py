@@ -208,11 +208,30 @@ def output_root(generator: str, plan_source: str, run_name: str | None = None) -
     return base / (run_name or f"{generator}_{plan_source}"), run_source
 
 
-def make_generator(name: str, replay: bool):
+def make_generator(name: str, settings):
     if name == "fake":
         from core_robot.eval.fake_generator import FakeGenerator
         return FakeGenerator()
-    raise SystemExit(f"--generator {name!r} is not implemented yet (live generation is a later stage)")
+    if name == "muse":
+        if not settings.api_key and not settings.replay:
+            raise SystemExit("MODEL_API_KEY is not set: add it to .env, or set CORE_ROBOT_REPLAY=1 to use the cache only")
+        from core_robot.codegen.muse_generator import MuseGenerator
+        from core_robot.meta_client import MetaClient
+        return MuseGenerator(MetaClient(settings=settings))
+    raise SystemExit(f"unknown --generator {name!r}")
+
+
+def resolve_tasks(spec: str | None) -> list[str] | None:
+    """"t4,t7" or full ids -> task ids. None means all tasks."""
+    if not spec:
+        return None
+    ids = []
+    for part in (p.strip() for p in spec.split(",") if p.strip()):
+        matches = [t.id for t in TASKS if t.id == part or t.id.split("_", 1)[0] == part]
+        if len(matches) != 1:
+            raise SystemExit(f"--tasks: {part!r} matches {matches or 'no task'}; use e.g. t4 or t4_stack_three")
+        ids.append(matches[0])
+    return ids
 
 
 def main(argv=None) -> int:
@@ -220,6 +239,9 @@ def main(argv=None) -> int:
     ap.add_argument("--generator", default="fake", choices=["fake", "muse"])
     ap.add_argument("--plan-source", default="ground_truth", choices=PLAN_SOURCES)
     ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--tasks", default=None, help="comma-separated task ids or prefixes, e.g. t4,t7")
+    ap.add_argument("--seeds", default=None, help="comma-separated execution seeds (default: exec_seeds())")
+    ap.add_argument("--conditions", default="A,B,C", help="comma-separated subset of A,B,C")
     ap.add_argument("--limit", type=int, default=None, help="only the first N runs (sorted order)")
     ap.add_argument("--dry-run", action="store_true", help="print planned runs and estimated cost; run nothing")
     ap.add_argument("--run-name", default=None, help="subdirectory name (default: <generator>_<plan_source>)")
@@ -227,9 +249,14 @@ def main(argv=None) -> int:
     ap.add_argument("--timeout", type=float, default=60.0)
     args = ap.parse_args(argv)
 
-    replay = load_settings().replay
+    settings = load_settings()
+    replay = settings.replay
     root, run_source = output_root(args.generator, args.plan_source, args.run_name)
-    runs = planned_runs(limit=args.limit)
+    seeds = [int(x) for x in args.seeds.split(",")] if args.seeds else None
+    conditions = tuple(c.strip() for c in args.conditions.split(",") if c.strip())
+    if not set(conditions) <= set(CONDITIONS):
+        raise SystemExit(f"--conditions must be a subset of {CONDITIONS}")
+    runs = planned_runs(resolve_tasks(args.tasks), seeds, conditions, limit=args.limit)
     todo = [r for r in runs if not is_finished(root, r)]
 
     if args.dry_run:
@@ -248,7 +275,7 @@ def main(argv=None) -> int:
 
     if args.plan_source == "predicted":
         raise SystemExit("--plan-source predicted is not implemented yet")
-    generator = make_generator(args.generator, replay)
+    generator = make_generator(args.generator, settings)
     t0 = time.monotonic()
     counts = run_matrix(todo, generator, root, args.plan_source, args.workers, not args.no_video, args.timeout)
     from core_robot.eval.report import write_report

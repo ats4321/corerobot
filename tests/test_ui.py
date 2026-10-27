@@ -54,7 +54,6 @@ def test_load_run_shows_attempts_and_fake_banner(run_set):
 
 
 @pytest.mark.parametrize("kwargs,needle", [
-    ({"replay": False}, "Live mode"),
     ({"seed": 7}, "not an evaluation seed"),
     ({"seed": "abc"}, "must be an integer"),
     ({"condition": "A"}, "No run log"),
@@ -71,6 +70,14 @@ def test_load_run_errors(run_set, kwargs, needle):
     assert needle in r["error"] and r["attempts"] == []
 
 
+def test_live_mode_without_key_is_an_error_not_a_call(run_set, monkeypatch):
+    from core_robot.config import Settings
+
+    monkeypatch.setattr(app, "load_settings", lambda: Settings(api_key=None, replay=False))
+    r = app.load_run("", "t1_red_in_red_bin", "B", 100, replay=False)
+    assert "Live mode" in r["error"] and "MODEL_API_KEY" in r["error"] and r["attempts"] == []
+
+
 def test_corrupt_log_is_an_error(run_set):
     rs, d = run_set
     (d / "run.json").write_text("{not json")
@@ -78,8 +85,7 @@ def test_corrupt_log_is_an_error(run_set):
 
 
 def test_stubs_are_marked_not_implemented():
-    for fn, args in ((app.perceive_demo, ("v.mp4",)), (app.plan_from_demo, ("v.mp4", None)),
-                     (app.generate_code_live, (None,))):
+    for fn, args in ((app.perceive_demo, ("v.mp4",)), (app.plan_from_demo, ("v.mp4", None))):
         with pytest.raises(NotImplementedError):
             fn(*args)
 

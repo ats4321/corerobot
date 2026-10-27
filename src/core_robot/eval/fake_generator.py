@@ -126,7 +126,7 @@ class FakeGenerator:
     name = "fake"
     run_source = RUN_SOURCE
 
-    def __call__(self, *, task, plan, attempt, feedback=None, image_path=None) -> dict:
+    def __call__(self, *, task, plan, attempt, scene=None, feedback=None, image_path=None) -> dict:
         tid = task.id
         if tid in CORRECT and tid not in WRONG:
             code = CORRECT[tid]
