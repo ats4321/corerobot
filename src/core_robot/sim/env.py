@@ -61,7 +61,16 @@ CAMERAS = {
     "overhead": dict(eye=(0.52, 0.0, 1.25), target=(0.52, 0.0, 0.0), up=(1, 0, 0), fov=45),
     # From the robot's right side, slightly above the table.
     "side": dict(eye=(0.55, -1.05, 0.55), target=(0.52, 0.0, 0.05), up=(0, 0, 1), fov=50),
+    # Demo camera: raised behind the robot's right shoulder, 40 deg down, heading 36 deg
+    # left of +x, 1.1 m from the table center. Shows the sides of block stacks.
+    # Left/right: +y (the robot's left) is the image's left, as in the overhead view.
+    # The view is turned 36 deg, so objects nearer the robot (smaller x) also appear
+    # further left; judge left_of/right_of from y, not from image columns alone.
+    # Placement was chosen so the tucked (home) arm hides no object: a camera straight
+    # behind the robot at ~45 deg is blocked by the base column and the tucked arm.
+    "angled": dict(eye=(-0.162, -0.495, 0.737), target=(0.5, 0.02, 0.03), up=(0, 0, 1), fov=40),
 }
+DEMO_CAMERA = "angled"
 
 
 class TabletopEnv:
@@ -161,12 +170,26 @@ class TabletopEnv:
         lo, hi = p.getAABB(self.bodies[name], physicsClientId=self.cid)
         return np.array(lo), np.array(hi)
 
-    def render(self, camera: str = "overhead") -> np.ndarray:
-        """RGB frame (H, W, 3) uint8 from the 'overhead' or 'side' camera."""
+    def _camera_matrices(self, camera: str):
         cam = CAMERAS[camera]
         w, h = self.image_size
         view = p.computeViewMatrix(cam["eye"], cam["target"], cam["up"], physicsClientId=self.cid)
         proj = p.computeProjectionMatrixFOV(cam["fov"], w / h, 0.05, 5.0, physicsClientId=self.cid)
+        return view, proj
+
+    def project(self, point, camera: str = DEMO_CAMERA) -> tuple[float, float]:
+        """Pixel (column, row) where a world point appears in `camera`'s image."""
+        view, proj = self._camera_matrices(camera)
+        v = np.array(view).reshape(4, 4).T @ np.append(np.asarray(point, float), 1.0)
+        c = np.array(proj).reshape(4, 4).T @ v
+        ndc = c[:3] / c[3]
+        w, h = self.image_size
+        return float((ndc[0] + 1) / 2 * w), float((1 - ndc[1]) / 2 * h)
+
+    def render(self, camera: str = "overhead") -> np.ndarray:
+        """RGB frame (H, W, 3) uint8 from the 'overhead', 'side' or 'angled' camera."""
+        w, h = self.image_size
+        view, proj = self._camera_matrices(camera)
         _, _, rgba, _, _ = p.getCameraImage(
             w, h, view, proj, renderer=p.ER_TINY_RENDERER, physicsClientId=self.cid
         )

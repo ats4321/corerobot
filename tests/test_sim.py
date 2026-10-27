@@ -131,3 +131,53 @@ def test_arm_home_and_view_clear_after_place(env):
         top = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, hi[2] - 0.002]
         hit = p.rayTest(eye, top, physicsClientId=env.cid)[0][0]
         assert hit != env.robot, f"arm blocks overhead view of {name}"
+
+
+@pytest.mark.parametrize("seed", range(10))
+def test_angled_camera_sees_every_object_with_arm_home(env, seed):
+    import pybullet as p
+
+    from core_robot.sim.env import CAMERAS
+
+    env.reset(seed)
+    Robot(env)
+    eye = CAMERAS["angled"]["eye"]
+    w, h = env.image_size
+    for name in env.bodies:
+        lo, hi = env.aabb(name)
+        mid = (lo + hi) / 2
+        for pt in ([mid[0], mid[1], hi[2] - 0.002], [lo[0] + 0.003, mid[1], mid[2]], [mid[0], lo[1] + 0.003, mid[2]]):
+            assert p.rayTest(eye, pt, physicsClientId=env.cid)[0][0] != env.robot, f"arm hides {name}"
+            u, v = env.project(pt, "angled")
+            assert 0 <= u < w and 0 <= v < h, f"{name} out of frame"
+
+
+def test_angled_camera_plus_y_is_image_left(env):
+    import numpy as np
+
+    env.reset(0, objects=[], fixed={"red_block": (0.52, 0.30), "blue_block": (0.52, -0.30)})
+    img = env.render("angled").astype(int)
+    red = (img[:, :, 0] > 150) & (img[:, :, 1] < 80) & (img[:, :, 2] < 80)
+    blue = (img[:, :, 2] > 150) & (img[:, :, 0] < 80)
+    assert np.nonzero(red)[1].mean() < np.nonzero(blue)[1].mean()
+    assert env.project((0.52, 0.30, 0.02))[0] < env.project((0.52, -0.30, 0.02))[0]
+
+
+def test_three_stack_visible_in_angled_view(env):
+    import numpy as np
+
+    env.reset(0, objects=["red_block", "green_block", "blue_block"])
+    robot = Robot(env)
+    robot.pick("green_block"); robot.place("green_block", "red_block")
+    robot.pick("blue_block"); robot.place("blue_block", "green_block")
+    img = env.render("angled").astype(int)
+    masks = {
+        "red": (img[:, :, 0] > 150) & (img[:, :, 1] < 80) & (img[:, :, 2] < 80),
+        "green": (img[:, :, 1] > 120) & (img[:, :, 0] < 100) & (img[:, :, 2] < 100),
+        "blue": (img[:, :, 2] > 150) & (img[:, :, 0] < 80),
+    }
+    rows = {c: np.nonzero(m)[0] for c, m in masks.items()}
+    for c, r in rows.items():
+        assert r.size > 30, f"{c} block barely visible ({r.size} px)"
+    # bottom-to-top order in the image: red lowest, blue highest
+    assert rows["red"].mean() > rows["green"].mean() > rows["blue"].mean()

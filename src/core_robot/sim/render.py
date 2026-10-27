@@ -1,4 +1,7 @@
-"""Record a simulation run to mp4 from one camera: one frame per 1/10 s of simulated time."""
+"""Record a simulation run to mp4: one frame per 1/10 s of simulated time.
+
+The default camera is env.DEMO_CAMERA (the angled view).
+"""
 
 from __future__ import annotations
 
@@ -6,7 +9,7 @@ from pathlib import Path
 
 import imageio.v2 as imageio
 
-from core_robot.sim.env import TabletopEnv
+from core_robot.sim.env import DEMO_CAMERA, TabletopEnv
 
 FRAME_PERIOD = 0.1  # seconds of simulated time per video frame
 
@@ -20,7 +23,7 @@ class Recorder:
     The video plays at real time (10 fps). `frames` counts frames written.
     """
 
-    def __init__(self, env: TabletopEnv, path: str | Path, camera: str = "overhead"):
+    def __init__(self, env: TabletopEnv, path: str | Path, camera: str = DEMO_CAMERA):
         self.env = env
         self.path = Path(path)
         self.camera = camera

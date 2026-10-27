@@ -1,7 +1,7 @@
 """Scripted demonstrator: performs a task's ground-truth plan with the robot primitives.
 
 Writes data/demos/<task_id>/seed_<n>/:
-  video.mp4               overhead camera, 10 fps of simulated time
+  video.mp4               angled demo camera (env.DEMO_CAMERA), 10 fps of simulated time
   ground_truth_plan.json  the Plan (object names / free_table_space only)
   initial_state.json      scene_state() before acting
   final_state.json        scene_state() after acting
