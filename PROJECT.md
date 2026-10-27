@@ -14,6 +14,7 @@ Show that Meta's models can reason about physical tasks, measured as task succes
 
 - Simulation only.
 - The model never controls joints; it only calls primitives pick(obj), place(obj, target), move_above(target), open_gripper().
+- Generated code defines run(robot, scene). scene is read-only data (a copy of the starting scene state: name, position, orientation, color, kind), not a primitive; changing it does not affect the simulator.
 - Success is judged from simulator state, never by asking a model.
 - Every model response is cached to disk by request hash.
 - All randomness is seeded.
