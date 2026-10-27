@@ -116,6 +116,20 @@ def test_deterministic_across_runs(small_run, tmp_path):
     assert strip(read_csv(root_a)) == strip(read_csv(tmp_path))
 
 
+def test_harness_error_runs_are_redone_on_resume(tmp_path):
+    spec = RunSpec("t1_red_in_red_bin", 100, "A")
+
+    class Missing(FakeGenerator):
+        def __call__(self, **kw):
+            raise ReplayMiss("not in cache")
+
+    run_matrix([spec], Missing(), tmp_path, record=False)
+    assert read_csv(tmp_path)[0]["failure_category"] == "harness error"
+    counts = run_matrix([spec], FakeGenerator(), tmp_path, record=False)
+    assert counts == {"done": 1}
+    assert read_csv(tmp_path)[0]["success"] == "1"
+
+
 def test_replay_miss_is_harness_error(tmp_path):
     class Missing(FakeGenerator):
         def __call__(self, **kw):

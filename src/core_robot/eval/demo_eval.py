@@ -11,11 +11,16 @@ from collections import Counter
 from pathlib import Path
 
 from core_robot.config import DEMOS_DIR, RUNS_DIR
+from core_robot.meta_client import ApiError, ReplayMiss
 from core_robot.perception.gate import sam_gate
 from core_robot.perception.perceive import load_perception, perceive
 from core_robot.planning.schema import Plan
 from core_robot.planning.scoring import score
 from core_robot.planning.video_planner import plan_from_video
+
+# Failures of the API or the harness for one demo: recorded for that demo (and counted as
+# a failure against the gate), never allowed to abort the remaining demos.
+HARNESS_ERRORS = (ApiError, ReplayMiss, RuntimeError)
 
 PERCEPTION_DIR = RUNS_DIR / "perception"
 PLANNER_DIR = RUNS_DIR / "planner"
@@ -47,8 +52,14 @@ def evaluate_planner(client, ids: list[str], perception_root: Path = PERCEPTION_
                      out_root: Path = PLANNER_DIR) -> dict:
     rows = []
     for demo_id in ids:
-        perception = perception_for(client, demo_id, perception_root)
-        result = plan_from_video(client, perception["clip"]["path"], perception)
+        try:
+            perception = perception_for(client, demo_id, perception_root)
+            result = plan_from_video(client, perception["clip"]["path"], perception)
+        except HARNESS_ERRORS as e:
+            rows.append({"demo": demo_id, "named": [], "strict": False, "lenient": False,
+                         "errors": ["harness error"], "planner_attempts": 0,
+                         "planner_error": f"{type(e).__name__}: {e}", "tokens": [0, 0], "plan": None})
+            continue
         gt = load_ground_truth_plan(demo_id)  # scoring only, after the plan exists
         s = score(result["plan"], gt)
         rows.append({
@@ -72,13 +83,18 @@ def evaluate_sam(client, ids: list[str], perception_root: Path = PERCEPTION_DIR)
     project = lambda p: env.project(p, "angled")
     rows = []
     for demo_id in ids:
-        perception = perception_for(client, demo_id, perception_root)
+        try:
+            perception = perception_for(client, demo_id, perception_root)
+        except HARNESS_ERRORS as e:
+            rows.append({"demo": demo_id, "pass": False, "objects": {}, "overlay": None,
+                         "error": f"{type(e).__name__}: {e}"})
+            continue
         d = DEMOS_DIR / demo_id
         initial = json.loads((d / "initial_state.json").read_text())
         final = json.loads((d / "final_state.json").read_text())
         g = sam_gate(perception, initial, final, project)
         rows.append({"demo": demo_id, "pass": g["pass"], "objects": g["objects"],
-                     "overlay": perception.get("overlay")})
+                     "overlay": perception.get("overlay"), "error": None})
     env.close()
     summary = {"demos": len(rows), "passed": sum(r["pass"] for r in rows), "rows": rows}
     perception_root.mkdir(parents=True, exist_ok=True)

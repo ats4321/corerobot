@@ -80,13 +80,16 @@ def run_path(root: Path, spec: RunSpec) -> Path:
 
 
 def is_finished(root: Path, spec: RunSpec) -> bool:
+    """A run is done when its log is finished and it did not end in a harness error
+    (generator/API/replay failure or sandbox crash); those are redone on resume."""
     p = run_path(root, spec) / "run.json"
     if not p.exists():
         return False
     try:
-        return bool(json.loads(p.read_text()).get("finished"))
+        log = json.loads(p.read_text())
     except json.JSONDecodeError:
         return False
+    return bool(log.get("finished")) and failure_category(log) != "harness error"
 
 
 def plan_for(task, seed: int, plan_source: str):

@@ -30,6 +30,8 @@ def main() -> int:
     s = evaluate_sam(MetaClient(settings=settings), ids)
     for r in s["rows"]:
         print(f"{'PASS' if r['pass'] else 'FAIL'}  {r['demo']}   overlay: {r['overlay']}")
+        if r.get("error"):
+            print(f"      harness error: {r['error'][:200]}")
         for name, o in r["objects"].items():
             tag = "" if o["required"] else " (optional)"
             print(f"      {name}{tag}: {'ok' if o['pass'] else o['reason']}  coverage {o['coverage']:.0%}"

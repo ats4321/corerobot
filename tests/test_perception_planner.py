@@ -401,3 +401,16 @@ def test_actual_spend_from_log(world_run):
     assert s["usd"] > 0 and s.get("sam_frames_estimated", 0) == 0
     again = actual_spend(world_run["settings"].log_path, since=9e12)
     assert again["usd"] == 0
+
+
+def test_one_failing_demo_does_not_abort_the_rest(tmp_path, project):
+    """A replay miss for every request: each demo is a recorded harness error, nothing raises."""
+
+    s = Settings(api_key=None, cache_dir=tmp_path / "c", log_path=tmp_path / "l.jsonl", replay=True)
+    client = MetaClient(settings=s, transport=ScriptedTransport(lambda *a: pytest.fail("no network in replay")))
+    ids = ["t1_red_in_red_bin/seed_0", "t3_stack_green_on_red/seed_0"]
+    planner = demo_eval.evaluate_planner(client, ids, tmp_path, tmp_path / "planner")
+    assert planner["strict"] == 0 and [r["errors"] for r in planner["rows"]] == [["harness error"]] * 2
+    assert all("ReplayMiss" in r["planner_error"] for r in planner["rows"])
+    sam = demo_eval.evaluate_sam(client, ids, tmp_path)
+    assert sam["passed"] == 0 and all(r["error"] for r in sam["rows"])

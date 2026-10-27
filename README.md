@@ -4,7 +4,7 @@ Learns a tabletop task from one demonstration video and performs it with a simul
 
 See [PROJECT.md](PROJECT.md) for the full brief.
 
-Status: simulator, primitives, 8 tasks with scripted demos, sandbox, checker, repair loop, evaluation harness and an offline UI are built and tested offline. The live model stages (SAM perception, Muse Spark planning and code generation) are not wired up yet.
+Status: simulator, primitives, 8 tasks with scripted demos, sandbox, checker, repair loop, evaluation harness, offline UI, Muse Spark code generator, SAM perception and the video planner are built and tested offline against a fake API. None of the live stages has been run against the real API yet.
 
 ## Setup
 
@@ -56,6 +56,19 @@ Then pass `--find-links /tmp/pyb/wheels` to the install above.
 # live API smoke test (needs .env); CORE_ROBOT_REPLAY=1 serves only from the cache
 .venv/bin/python scripts/smoke_models.py
 ```
+
+## Live gates (needs MODEL_API_KEY)
+
+```bash
+scripts/run_live_gates.sh          # prints the cost estimate, asks, then runs:
+#  1. smoke tests (+ replay from cache)     2. live eval: t4, t7; seed 100; A, B, C
+#  3. planner on the 10 demos (strict >= 6/10)   4. SAM gate (>= 8/10)
+# Spend is reported after each step; it stops if spend exceeds BUDGET (default $3).
+.venv/bin/python scripts/spend.py   # actual spend from data/runs/model_calls.jsonl (cache hits are free)
+```
+
+Individual steps: `scripts/eval_planner.py [--dry-run]`, `scripts/sam_gate.py`, and
+`python -m core_robot.eval.run_eval --generator muse --tasks t4,t7 --seeds 100 [--dry-run]`.
 
 ## Results
 
