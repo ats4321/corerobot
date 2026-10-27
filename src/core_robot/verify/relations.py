@@ -1,7 +1,7 @@
 """Goal relations and the success check, judged only from simulator state.
 
 Frames: meters, table top at z = 0, +x away from the robot, +y to the robot's left
-(the left side of the overhead image).
+(the left side of the overhead and angled camera images).
 
 Relations (subject relation target):
   in            subject's center is inside the target bin's inner footprint and below its rim
@@ -80,17 +80,19 @@ def holds(atom: GoalAtom, final: dict, initial: dict) -> tuple[bool, str]:
     return False, f"unknown relation {rel!r}"
 
 
-def unnamed_blocks_still(plan: Plan, initial: dict, final: dict) -> list[tuple[str, bool, str]]:
-    """GLOBAL SUCCESS RULE: blocks not named in the plan's steps must move less than 2 cm.
+def unmoved_blocks_still(plan: Plan, initial: dict, final: dict) -> list[tuple[str, bool, str]]:
+    """GLOBAL SUCCESS RULE: every block that no step moves must stay where it started.
 
-    A block is "named in the plan's steps" if it is the object or the destination of
-    any step. Every other block must end within 2 cm (horizontal distance) of where it
-    started; knocking over or relocating a block the plan does not mention fails the task.
+    A block is "moved by a step" only if it is the `object` of some pick_and_place step.
+    Every other block, including blocks the plan uses only as a destination (for
+    example the bottom block of a stack) and blocks the plan never mentions, must end
+    within 2 cm (horizontal distance) of its starting position. Knocking over, pushing,
+    or relocating such a block fails the task even if every goal relation holds.
     """
-    named = plan.named_in_steps()
+    moved = plan.moved_objects()
     out = []
     for name, s0 in initial.items():
-        if s0["kind"] != "block" or name in named:
+        if s0["kind"] != "block" or name in moved:
             continue
         d = _xy_dist(final[name]["position"], s0["position"])
         out.append((name, d < STILL_TOL, f"{name} moved {d:.3f} m (max {STILL_TOL})"))
@@ -98,7 +100,7 @@ def unnamed_blocks_still(plan: Plan, initial: dict, final: dict) -> list[tuple[s
 
 
 def check_success(plan: Plan, initial: dict, final: dict) -> dict:
-    """Success = every goal atom holds AND the global rule (unnamed_blocks_still) holds.
+    """Success = every goal atom holds AND the global rule (unmoved_blocks_still) holds.
 
     Nothing else is tested. Returns {"success", "goal": [...], "global_rule": [...]}.
     """
@@ -106,7 +108,7 @@ def check_success(plan: Plan, initial: dict, final: dict) -> dict:
     for atom in plan.goal:
         ok, why = holds(atom, final, initial)
         goal.append({"atom": f"{atom.subject} {atom.relation} {atom.target}", "ok": ok, "detail": why})
-    still = [{"block": n, "ok": ok, "detail": why} for n, ok, why in unnamed_blocks_still(plan, initial, final)]
+    still = [{"block": n, "ok": ok, "detail": why} for n, ok, why in unmoved_blocks_still(plan, initial, final)]
     return {
         "success": all(g["ok"] for g in goal) and all(s["ok"] for s in still),
         "goal": goal,

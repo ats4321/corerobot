@@ -1,8 +1,9 @@
 """The 8 benchmark tasks: scene, ground-truth plan, and goal check for each.
 
 A task's success check is exactly core_robot.verify.relations.check_success applied to
-its ground-truth plan: every goal atom must hold, plus the global rule that blocks not
-named in the plan's steps move less than 2 cm. Nothing else is tested.
+its ground-truth plan: every goal atom must hold, plus the global rule that every block
+not moved by a step (including destination-only blocks) moves less than 2 cm.
+Nothing else is tested.
 """
 
 from __future__ import annotations

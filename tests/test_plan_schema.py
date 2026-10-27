@@ -104,16 +104,44 @@ def test_swapped_with_uses_initial_state():
     assert not holds(atom("red_block", "swapped_with", "blue_block"), half, init)[0]
 
 
-def test_global_rule_unnamed_blocks_must_stay():
-    plan = Plan.model_validate({
-        "objects": [{"name": n, "color": n.split("_")[0], "kind": "bin" if "bin" in n else "block"}
-                    for n in ("red_block", "blue_block", "red_bin")],
-        "steps": [{"index": 0, "action": "pick_and_place", "object": "red_block", "destination": "red_bin"}],
-        "goal": [{"subject": "red_block", "relation": "in", "target": "red_bin"}],
+def _plan(objects, steps, goal):
+    return Plan.model_validate({
+        "objects": [{"name": n, "color": n.split("_")[0], "kind": "bin" if "bin" in n else "block"} for n in objects],
+        "steps": [{"index": i, "action": "pick_and_place", "object": o, "destination": d} for i, (o, d) in enumerate(steps)],
+        "goal": [{"subject": a, "relation": r, "target": b} for a, r, b in goal],
     })
+
+
+def test_global_rule_unmentioned_blocks_must_stay():
+    plan = _plan(("red_block", "blue_block", "red_bin"), [("red_block", "red_bin")], [("red_block", "in", "red_bin")])
     init = st(red_block=(0.4, 0.1, 0.02), blue_block=(0.6, -0.1, 0.02), red_bin=(0.5, 0.25, 0.0))
     done = st(red_block=(0.5, 0.25, 0.026), blue_block=(0.605, -0.1, 0.02), red_bin=(0.5, 0.25, 0.0))
     assert check_success(plan, init, done)["success"]
     bumped = st(red_block=(0.5, 0.25, 0.026), blue_block=(0.63, -0.1, 0.02), red_bin=(0.5, 0.25, 0.0))
     r = check_success(plan, init, bumped)
     assert not r["success"] and all(g["ok"] for g in r["goal"])
+
+
+STACK = _plan(("red_block", "green_block"), [("green_block", "red_block")], [("green_block", "on", "red_block")])
+STACK_INIT = st(red_block=(0.5, 0.0, 0.02), green_block=(0.4, 0.2, 0.02))
+
+
+def test_destination_block_knocked_away_fails_even_if_goal_holds():
+    # The whole stack slid 3 cm: "on" still holds, but red (destination only, never moved) moved.
+    shoved = st(red_block=(0.53, 0.0, 0.02), green_block=(0.53, 0.0, 0.06))
+    r = check_success(STACK, STACK_INIT, shoved)
+    assert all(g["ok"] for g in r["goal"])
+    assert not r["success"]
+    assert [x["block"] for x in r["global_rule"] if not x["ok"]] == ["red_block"]
+
+
+def test_destination_block_nudged_1cm_passes():
+    nudged = st(red_block=(0.51, 0.0, 0.02), green_block=(0.51, 0.0, 0.06))
+    assert check_success(STACK, STACK_INIT, nudged)["success"]
+
+
+def test_moved_blocks_are_exempt():
+    # green travels 0.22 m (it is the moved object) and is not judged by the still rule.
+    done = st(red_block=(0.5, 0.0, 0.02), green_block=(0.5, 0.0, 0.06))
+    r = check_success(STACK, STACK_INIT, done)
+    assert r["success"] and [x["block"] for x in r["global_rule"]] == ["red_block"]

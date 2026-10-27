@@ -24,6 +24,15 @@ MUSE_MODEL = "muse-spark-1.3"
 SAM_MODEL = "sam-3.1"
 BASE_URL = "https://api.meta.ai/v1"
 
+# Execution (evaluation) seeds are disjoint from demonstration seeds (0, 1, ...), so a
+# robot is never evaluated on the exact layout it was shown.
+EXEC_SEED_BASE = 100
+
+
+def exec_seeds(n: int = 5) -> list[int]:
+    """Seeds for evaluation layouts: EXEC_SEED_BASE .. EXEC_SEED_BASE + n - 1."""
+    return list(range(EXEC_SEED_BASE, EXEC_SEED_BASE + n))
+
 
 @dataclass(frozen=True)
 class Settings:

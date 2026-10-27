@@ -19,7 +19,13 @@
         "detail": "horizontal offset 0.000 m (max 0.02), bottom-to-top gap -0.000 m (max \u00b10.015)"
       }
     ],
-    "global_rule": []
+    "global_rule": [
+      {
+        "block": "red_block",
+        "ok": true,
+        "detail": "red_block moved 0.000 m (max 0.02)"
+      }
+    ]
   },
   "video_frames": 143,
   "call_log": [

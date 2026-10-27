@@ -119,6 +119,10 @@ class Plan(BaseModel):
         if missing:
             raise ValueError(f"plan names objects not in the scene: {sorted(missing)}")
 
+    def moved_objects(self) -> set[str]:
+        """Objects picked and placed by some step (the `object` of a step)."""
+        return {s.object for s in self.steps}
+
     def named_in_steps(self) -> set[str]:
         """Objects that appear in any step, as the moved object or as a destination."""
         return {n for s in self.steps for n in (s.object, s.destination) if n != FREE_TABLE_SPACE}

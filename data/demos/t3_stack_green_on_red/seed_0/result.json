@@ -16,6 +16,11 @@
     ],
     "global_rule": [
       {
+        "block": "red_block",
+        "ok": true,
+        "detail": "red_block moved 0.000 m (max 0.02)"
+      },
+      {
         "block": "blue_block",
         "ok": true,
         "detail": "blue_block moved 0.000 m (max 0.02)"
