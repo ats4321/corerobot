@@ -8,7 +8,9 @@ Conditions:
 Every attempt runs in a fresh sandbox process that resets the simulator to the same
 execution seed, so attempts never inherit the previous attempt's end state. Success is
 judged against the task's ground-truth plan for the execution layout, not the plan given
-to the generator. One JSON log per run records each attempt's code, report and outcome.
+to the generator. One JSON log per run records each attempt's code, report and outcome;
+"finished" is set only once the run is complete (used to resume interrupted evaluations).
+An exception raised by generate_fn (API error, replay miss) ends the run as a harness error.
 """
 
 from __future__ import annotations
@@ -28,8 +30,16 @@ MAX_ATTEMPTS = {"A": 1, "B": 3, "C": 3}
 
 
 class GenerateFn(Protocol):
+    """Returns the code as a string, or {"code": str, "tokens_in": int, "tokens_out": int}."""
+
     def __call__(self, *, task, plan: Plan, attempt: int, feedback: str | None = None,
-                 image_path: str | None = None) -> str: ...
+                 image_path: str | None = None) -> str | dict: ...
+
+
+def _normalize(generated) -> tuple[str, int, int]:
+    if isinstance(generated, str):
+        return generated, 0, 0
+    return generated["code"], int(generated.get("tokens_in", 0)), int(generated.get("tokens_out", 0))
 
 
 def run_dir(task_id: str, condition: str, exec_seed: int) -> Path:
@@ -45,8 +55,12 @@ def run_with_repair(
     out_dir: str | Path | None = None,
     timeout_s: float = DEFAULT_TIMEOUT_S,
     record: bool = True,
+    meta: dict | None = None,
 ) -> dict:
-    """Run one (task, exec_seed, condition). Stops at the first success. Returns the run log."""
+    """Run one (task, exec_seed, condition). Stops at the first success. Returns the run log.
+
+    meta: extra fields (e.g. run_source, plan_source) stored in the log from the first write.
+    """
     if condition not in MAX_ATTEMPTS:
         raise ValueError(f"condition must be one of {sorted(MAX_ATTEMPTS)}, got {condition!r}")
     out = Path(out_dir) if out_dir else run_dir(task.id, condition, exec_seed)
@@ -54,10 +68,24 @@ def run_with_repair(
     log = {
         "task_id": task.id, "condition": condition, "exec_seed": exec_seed,
         "plan": plan.model_dump(exclude_none=True), "success": False, "attempts_used": 0, "attempts": [],
+        "tokens_in": 0, "tokens_out": 0, "finished": False, **(meta or {}),
     }
     feedback = image_path = None
     for attempt in range(1, MAX_ATTEMPTS[condition] + 1):
-        code = generate_fn(task=task, plan=plan, attempt=attempt, feedback=feedback, image_path=image_path)
+        try:
+            code, t_in, t_out = _normalize(
+                generate_fn(task=task, plan=plan, attempt=attempt, feedback=feedback, image_path=image_path)
+            )
+        except Exception as e:  # generator/API/replay failure: a harness error, not the model's code
+            log["attempts"].append({
+                "attempt": attempt, "feedback_given": feedback, "image_given": image_path, "code": None,
+                "report": None, "generator_error": f"{type(e).__name__}: {e}",
+                "outcome": {"success": False, "generator_error": True},
+            })
+            log["attempts_used"] = attempt
+            break
+        log["tokens_in"] += t_in
+        log["tokens_out"] += t_out
         result = run_code(code, task.id, exec_seed, out / f"attempt_{attempt}", timeout_s=timeout_s, record=record)
         gt_plan = task.ground_truth_plan(result["initial_state"]) if result["initial_state"] else plan
         chk = checker.check(task, result["final_state"], result["initial_state"], gt_plan)
@@ -67,6 +95,8 @@ def run_with_repair(
             "feedback_given": feedback,
             "image_given": image_path,
             "code": code,
+            "tokens_in": t_in,
+            "tokens_out": t_out,
             "report": report,
             "outcome": {
                 "success": chk["success"], "ran_ok": result["ok"], "exception": result["exception"],
@@ -89,7 +119,9 @@ def run_with_repair(
             feedback = report
         if condition == "C":
             image_path = (result["frames"] or {}).get(DEMO_CAMERA)
+    log["finished"] = True
     log["log_path"] = str(out / "run.json")
+    _write(out / "run.json", log)
     return log
 
 

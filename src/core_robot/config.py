@@ -24,6 +24,13 @@ MUSE_MODEL = "muse-spark-1.3"
 SAM_MODEL = "sam-3.1"
 BASE_URL = "https://api.meta.ai/v1"
 
+FAKE_RUNS_DIR = RUNS_DIR / "fake"  # anything produced by the fake generator lives here only
+LIVE_RUNS_DIR = RUNS_DIR / "eval"
+
+# Muse Spark 1.3 standard-mode prices, USD per 1M tokens (dev.meta.ai/docs/pricing-rate-limits).
+PRICE_INPUT_PER_M = 1.25
+PRICE_OUTPUT_PER_M = 4.25
+
 # Execution (evaluation) seeds are disjoint from demonstration seeds (0, 1, ...), so a
 # robot is never evaluated on the exact layout it was shown.
 EXEC_SEED_BASE = 100

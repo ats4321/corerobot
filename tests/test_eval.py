@@ -1,0 +1,196 @@
+"""Evaluation harness: cost estimate, resumability, determinism, labelling, fake isolation."""
+
+import csv
+import json
+from pathlib import Path
+
+import pytest
+
+from core_robot.config import FAKE_RUNS_DIR, LIVE_RUNS_DIR, RUNS_DIR
+from core_robot.eval.fake_generator import FakeGenerator
+from core_robot.eval.report import FAKE_BANNER, build_markdown, build_readme_results, write_report
+from core_robot.eval.run_eval import (
+    CSV_FIELDS, RunSpec, estimate_codegen_cost, failure_category, main, output_root, planned_runs,
+    run_matrix, run_path, token_cost,
+)
+from core_robot.meta_client import ReplayMiss
+
+DEMOS = Path(__file__).resolve().parents[1] / "data" / "demos"
+
+
+# ---- cost ----
+
+def test_token_cost_per_generation():
+    # 8000 * 1.25/1e6 + 1500 * 4.25/1e6 = 0.0100 + 0.006375
+    assert token_cost(8000, 1500) == pytest.approx(0.016375)
+
+
+def test_codegen_upper_bound_full_matrix():
+    est = estimate_codegen_cost(planned_runs())
+    assert est["runs"] == 120
+    assert est["generations"] == 40 * 1 + 40 * 3 + 40 * 3 == 280
+    assert est["usd_total"] == pytest.approx(280 * 0.016375) == pytest.approx(4.585)
+
+
+def test_dry_run_prints_generations_tokens_total(capsys):
+    assert main(["--dry-run", "--run-name", "pytest_dry_run_never_written"]) == 0
+    out = capsys.readouterr().out
+    assert "280 generations x (8000 in + 1500 out tokens)" in out and "$4.58" in out
+    assert "120 runs to do" in out
+    assert not (FAKE_RUNS_DIR / "pytest_dry_run_never_written").exists()
+
+
+def test_limit():
+    assert len(planned_runs(limit=7)) == 7
+    assert planned_runs(limit=7) == planned_runs()[:7]
+
+
+# ---- isolation of fake output ----
+
+def test_fake_output_only_under_runs_fake():
+    root, src = output_root("fake", "ground_truth")
+    assert src == "fake" and FAKE_RUNS_DIR in root.parents and root.is_relative_to(RUNS_DIR / "fake")
+    live, src2 = output_root("muse", "ground_truth")
+    assert src2 == "live" and live.is_relative_to(LIVE_RUNS_DIR) and not live.is_relative_to(FAKE_RUNS_DIR)
+
+
+# ---- running small matrices (no video, fast) ----
+
+SMALL = [RunSpec("t1_red_in_red_bin", 100, "A"), RunSpec("t4_stack_three", 100, "A"),
+         RunSpec("t4_stack_three", 100, "B"), RunSpec("t7_swap_red_blue", 100, "C")]
+
+
+def read_csv(root):
+    with open(root / "results.csv") as f:
+        return list(csv.DictReader(f))
+
+
+@pytest.fixture(scope="module")
+def small_run(tmp_path_factory):
+    root = tmp_path_factory.mktemp("eval_a")
+    counts = run_matrix(SMALL, FakeGenerator(), root, workers=4, record=False)
+    return root, counts
+
+
+def test_small_matrix_rows_and_banner(small_run):
+    root, counts = small_run
+    assert counts["done"] == 4
+    rows = read_csv(root)
+    assert list(rows[0]) == CSV_FIELDS
+    got = {(r["task"], r["condition"]): (r["success"], r["attempts"], r["failure_category"]) for r in rows}
+    assert got == {
+        ("t1_red_in_red_bin", "A"): ("1", "1", ""),
+        ("t4_stack_three", "A"): ("0", "1", "wrong order"),
+        ("t4_stack_three", "B"): ("1", "2", ""),
+        ("t7_swap_red_blue", "C"): ("0", "3", "code error"),
+    }
+    assert {r["run_source"] for r in rows} == {"fake"} and {r["est_cost_usd"] for r in rows} == {"0.0"}
+    md, png = write_report(root)
+    assert md.read_text().startswith(f"> **{FAKE_BANNER}**")
+    assert png.stat().st_size > 10_000
+
+
+def test_resume_skips_finished_and_redoes_unfinished(small_run):
+    root, _ = small_run
+    calls = []
+
+    class Counting(FakeGenerator):
+        def __call__(self, **kw):
+            calls.append(kw["task"].id)
+            return super().__call__(**kw)
+
+    assert run_matrix(SMALL, Counting(), root, record=False)["skipped"] == 4
+    assert calls == []
+    p = run_path(root, SMALL[0]) / "run.json"
+    log = json.loads(p.read_text())
+    log["finished"] = False  # simulate a crash mid-run
+    p.write_text(json.dumps(log))
+    counts = run_matrix(SMALL, Counting(), root, record=False)
+    assert counts == {"skipped": 3, "done": 1} and calls == ["t1_red_in_red_bin"]
+
+
+def test_deterministic_across_runs(small_run, tmp_path):
+    root_a, _ = small_run
+    run_matrix(list(reversed(SMALL)), FakeGenerator(), tmp_path, workers=2, record=False)
+    strip = lambda rows: [{k: v for k, v in r.items() if k != "wall_clock_s"} for r in rows]
+    assert strip(read_csv(root_a)) == strip(read_csv(tmp_path))
+
+
+def test_replay_miss_is_harness_error(tmp_path):
+    class Missing(FakeGenerator):
+        def __call__(self, **kw):
+            raise ReplayMiss("request abc not in cache (CORE_ROBOT_REPLAY=1)")
+
+    run_matrix([RunSpec("t1_red_in_red_bin", 100, "B")], Missing(), tmp_path, record=False)
+    (row,) = read_csv(tmp_path)
+    assert row["success"] == "0" and row["failure_category"] == "harness error" and row["attempts"] == "1"
+    log = json.loads((run_path(tmp_path, RunSpec("t1_red_in_red_bin", 100, "B")) / "run.json").read_text())
+    assert "ReplayMiss" in log["attempts"][0]["generator_error"]
+
+
+# ---- category labelling from synthetic logs ----
+
+T4_INIT = json.loads((DEMOS / "t4_stack_three" / "seed_0" / "initial_state.json").read_text())
+
+
+def mklog(outcome=None, calls=(), unmoved=(), extra=None, task="t4_stack_three"):
+    attempt = {"outcome": {"success": False, "unmoved": list(unmoved), **(outcome or {})},
+               "call_log": list(calls), "initial_state": T4_INIT, **(extra or {})}
+    return {"task_id": task, "success": False, "attempts": [attempt]}
+
+
+def pick(obj, ok=True, reason=""):
+    return {"primitive": "pick", "args": {"obj": obj}, "ok": ok, "reason": reason}
+
+
+@pytest.mark.parametrize("log,expected", [
+    ({"task_id": "t4_stack_three", "success": True, "attempts": []}, ""),
+    (mklog(extra={"generator_error": "ReplayMiss: x"}), "harness error"),
+    (mklog({"sandbox_error": True, "exception": "sandbox process failed"}), "harness error"),
+    (mklog({"timed_out": True, "exception": "timeout"}), "timeout"),
+    (mklog({"rejected": True, "exception": "rejected before running"}), "code error"),
+    (mklog({"exception": "ValueError: boom"}), "code error"),
+    (mklog(calls=[pick("green_block", False, "grasp missed: gripper 0.050 m from object")]), "grasp failure"),
+    (mklog(calls=[pick("green_block", False, "unreachable")]), "grasp failure"),
+    (mklog(calls=[pick("green_block"), pick("red_block")]), "wrong object"),           # moved a block the plan doesn't
+    (mklog(calls=[pick("green_block")]), "wrong object"),                              # never moved blue
+    (mklog(calls=[pick("green_block"), pick("blue_block")],
+           unmoved=[{"block": "red_block", "ok": False, "moved_cm": 4.0}]), "wrong object"),  # disturbed red
+    (mklog(calls=[pick("blue_block"), pick("green_block")]), "wrong order"),
+    (mklog(calls=[pick("green_block"), pick("blue_block")]), "other"),
+])
+def test_failure_category(log, expected):
+    assert failure_category(log) == expected
+
+
+# ---- README results only from live runs ----
+
+def _csv(path, run_source):
+    rows = [{"task": "t1_red_in_red_bin", "seed": 100, "condition": c, "success": 1, "attempts": 1,
+             "plan_source": "ground_truth", "run_source": run_source, "failure_category": "",
+             "wall_clock_s": 1.0, "tokens_in": 0, "tokens_out": 0, "est_cost_usd": 0} for c in "ABC"]
+    with open(path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=CSV_FIELDS)
+        w.writeheader()
+        w.writerows(rows)
+    return path
+
+
+def test_readme_results_refuse_fake(tmp_path):
+    with pytest.raises(ValueError, match="refusing"):
+        build_readme_results(_csv(tmp_path / "fake.csv", "fake"))
+    live = build_readme_results(_csv(tmp_path / "live.csv", "live"))
+    assert FAKE_BANNER not in live and "3/3" not in live and "1/1 (100%)" in live
+
+
+def test_markdown_has_t8_line_and_totals():
+    rows = []
+    for t, ok in (("t1_red_in_red_bin", 1), ("t2_sort_by_color", 0), ("t8_nearest_to_mug", 1)):
+        for s in (100, 101):
+            rows.append({"task": t, "seed": s, "condition": "A", "success": ok, "attempts": 1,
+                         "plan_source": "ground_truth", "run_source": "live", "failure_category": "" if ok else "other",
+                         "tokens_in": 0, "tokens_out": 0, "est_cost_usd": 0})
+    md = build_markdown(rows)
+    assert "| **t1-t7 total** | 2/4 (50%) |" in md
+    assert "| **t8 (nearest to mug), separate** | 2/2 (100%) |" in md
+    assert "| **overall t1-t8** | 4/6 (67%) |" in md

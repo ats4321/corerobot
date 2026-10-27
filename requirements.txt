@@ -7,4 +7,5 @@ opencv-python
 pillow
 imageio
 imageio-ffmpeg
+matplotlib
 pytest
