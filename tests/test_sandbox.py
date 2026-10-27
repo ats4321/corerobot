@@ -160,3 +160,10 @@ def test_api_doc_lists_primitives_and_rule():
     assert "GLOBAL SUCCESS RULE" in doc and "destination" in doc
     assert "swapped_with" in doc
     assert "_move_to" not in doc and "home(" not in doc
+
+
+def test_relative_out_dir(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    r = run_code(GOOD_T1, T1, 100, "rel/run", record=False)
+    assert r["ok"], r["exception"]
+    assert (tmp_path / "rel" / "run" / "result.json").exists()

@@ -91,14 +91,16 @@ def run_code(
     """Validate and execute `code` against a fresh scene for (task_id, exec_seed).
 
     Returns {ok, exception, call_log, initial_state, final_state, video, frames, stdout,
-    timed_out, rejected}. `ok` means the code ran to completion without an exception or
+    timed_out, rejected, sandbox_error}. sandbox_error means the harness itself failed,
+    not the generated code. `ok` means the code ran to completion without an exception or
     timeout; it says nothing about task success (use verify.checker for that).
     """
-    out = Path(out_dir)
+    out = Path(out_dir).resolve()  # the child runs with cwd=out, so paths must be absolute
     out.mkdir(parents=True, exist_ok=True)
     base = {
         "ok": False, "exception": None, "call_log": [], "initial_state": None, "final_state": None,
         "video": None, "frames": {}, "stdout": "", "timed_out": False, "rejected": False,
+        "sandbox_error": False,
     }
     problems = validate_code(code)
     if problems:
@@ -122,7 +124,7 @@ def run_code(
         }
     result_path = out / "result.json"
     if not result_path.exists():
-        return {**base, "exception": f"sandbox process failed (exit {proc.returncode}): {proc.stderr[-2000:]}",
+        return {**base, "sandbox_error": True, "exception": f"sandbox process failed (exit {proc.returncode}): {proc.stderr[-2000:]}",
                 "call_log": _read_calls(out / "calls.jsonl")}
     return {**base, **json.loads(result_path.read_text())}
 
