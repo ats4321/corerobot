@@ -59,3 +59,42 @@ class ScriptedTransport:
 
 def code_reply(code: str, **kw) -> dict:
     return responses_payload(json.dumps({"code": code}), **kw)
+
+
+# ---- SAM 3.1 wire format ----
+
+def _mask_payload(h: int, w: int) -> str:
+    """A real one_bit payload for a filled h x w raster (decodable by meta_sam_parser)."""
+    from meta_sam_parser._mask_codec import _encode_raster  # test-only use of the reference encoder
+
+    return _encode_raster([1] * (h * w), w, h)
+
+
+def sam_record(oid: int, box, size=(640, 480)) -> str:
+    x1, y1, x2, y2 = (int(round(v)) for v in box)
+    h, w = max(1, y2 - y1 + 1), max(1, x2 - x1 + 1)
+    return (f"{oid}<|box;x1={x1};y1={y1};x2={x2};y2={y2};w={size[0]};h={size[1]}|>"
+            f"<|mask;x=0;y=0;data={h},{w},{_mask_payload(h, w)}|>")
+
+
+def sam_text(frames: dict[int, list[tuple[int, tuple]]]) -> str:
+    """{frame: [(object_id, box), ...]} -> SAM output text, one line per frame with objects."""
+    return "\n".join(f"<{f}f>" + ",".join(sam_record(o, b) for o, b in recs)
+                     for f, recs in sorted(frames.items()) if recs)
+
+
+def sam_payload(text: str, frames_processed: int | None = None) -> dict:
+    usage = {"video_frames_processed": frames_processed} if frames_processed is not None else {}
+    return responses_payload(text, model="sam-3.1", input_tokens=0, output_tokens=0, extra_usage=usage)
+
+
+def media_sha(body: dict) -> str | None:
+    """sha256 of the first inline image/video in a request (to tell which file was sent)."""
+    import base64
+    import hashlib
+
+    for p in user_parts(body):
+        url = p.get("video_url") or p.get("image_url")
+        if url and url.startswith("data:"):
+            return hashlib.sha256(base64.b64decode(url.split(",", 1)[1])).hexdigest()
+    return None

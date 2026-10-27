@@ -25,13 +25,15 @@ MAX_ATTEMPTS_SHOWN = 3
 # is wired: switching "Replay from cache" off runs run_live() below.
 
 def perceive_demo(video_path: str):
-    """STUB: live API. SAM 3.1: segment and track the demo's objects."""
-    raise NotImplementedError("perception (SAM 3.1) is not wired up yet; use 'Replay from cache'")
+    """STUB: live API. Implemented in core_robot.perception.perceive (run via scripts/eval_planner.py);
+    not yet shown on this page."""
+    raise NotImplementedError("perception is not on the page yet; run scripts/eval_planner.py")
 
 
 def plan_from_demo(video_path: str, masks):
-    """STUB: live API. Muse Spark: demo video + masks -> Plan JSON."""
-    raise NotImplementedError("planning from video (Muse Spark) is not wired up yet; use 'Replay from cache'")
+    """STUB: live API. Implemented in core_robot.planning.video_planner (run via scripts/eval_planner.py);
+    not yet shown on this page."""
+    raise NotImplementedError("video-to-plan is not on the page yet; run scripts/eval_planner.py")
 
 
 # ---------------------------------------------------------------- end STUB

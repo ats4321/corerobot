@@ -271,26 +271,27 @@ class MetaClient:
 
     def _call(self, model: str, logical: dict, build: Callable[[], tuple]) -> dict:
         key = request_key(logical)
+        kind = _media_kind(logical)
         path = self.settings.cache_dir / f"{key}.json"
         if path.exists():
             resp = json.loads(path.read_text())["response"]
-            self._log(model, key, cache_hit=True, latency_s=0.0, resp=resp)
+            self._log(model, key, kind, cache_hit=True, latency_s=0.0, resp=resp)
             return resp
         if self.settings.replay:
-            self._log(model, key, cache_hit=False, latency_s=0.0, resp=None, error="replay_miss")
+            self._log(model, key, kind, cache_hit=False, latency_s=0.0, resp=None, error="replay_miss")
             raise ReplayMiss(f"request {key[:12]} for {model} not in cache (CORE_ROBOT_REPLAY=1)")
         t0 = time.monotonic()
         try:
             method, api_path, body = build()
             resp = self._send_with_retries(lambda: self._transport()(method, api_path, body, None))
         except Exception as e:
-            self._log(model, key, cache_hit=False, latency_s=time.monotonic() - t0, resp=None, error=str(e)[:500])
+            self._log(model, key, kind, cache_hit=False, latency_s=time.monotonic() - t0, resp=None, error=str(e)[:500])
             raise
         latency = time.monotonic() - t0
         tmp = path.with_suffix(f".{threading.get_ident()}.tmp")
         tmp.write_text(json.dumps({"request": logical, "response": resp}))
         tmp.replace(path)
-        self._log(model, key, cache_hit=False, latency_s=latency, resp=resp)
+        self._log(model, key, kind, cache_hit=False, latency_s=latency, resp=resp)
         return resp
 
     def _send_with_retries(self, send: Callable[[], dict]) -> dict:
@@ -307,11 +308,12 @@ class MetaClient:
                 delay *= 2
         raise AssertionError("unreachable")
 
-    def _log(self, model, key, cache_hit, latency_s, resp, error=None):
+    def _log(self, model, key, kind, cache_hit, latency_s, resp, error=None):
         usage = (resp or {}).get("usage") if isinstance(resp, dict) else None
         rec = {
             "ts": time.time(),
             "model": model,
+            "kind": kind,
             "key": key,
             "cache_hit": cache_hit,
             "latency_s": round(latency_s, 3),
@@ -333,6 +335,12 @@ class _MediaRef:
 
     path: Path
     mode: str
+
+
+def _media_kind(logical: dict) -> str:
+    """"video", "image" or "text": the richest media part in a request (for spend accounting)."""
+    blob = json.dumps(logical)
+    return "video" if '"input_video"' in blob else "image" if '"input_image"' in blob else "text"
 
 
 def _logical(obj):
