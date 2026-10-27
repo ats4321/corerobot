@@ -26,6 +26,7 @@ and `pip wheel` it locally.
 .venv/bin/pytest -q                          # offline unit tests
 .venv/bin/python scripts/smoke_models.py     # live API smoke test (cached in data/cache/model)
 CORE_ROBOT_REPLAY=1 .venv/bin/python scripts/smoke_models.py   # cache-only replay
+.venv/bin/python scripts/handwritten_demo.py # sim baseline: red_block -> red_bin, 10 seeds + mp4 in data/runs/
 ```
 
 ## Sample data
