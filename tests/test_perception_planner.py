@@ -235,7 +235,7 @@ def test_keyframe_fallback_on_video_error(tmp_path, clip):
 
     t = track_object(_client_with(handler, tmp_path), clip["path"], "red_block", clip["n_frames"], tmp_path / "kf")
     assert t["source"] == "keyframes" and t["coverage"] == 1.0 and len(t["attempted"]) == 8
-    assert t["fallback"]["reason"].startswith("HTTP 400") and t["fallback"]["used"] == "keyframes"
+    assert t["fallback"]["reason"].startswith("HTTP 400") and t["fallback"]["used"] == "keyframes 'red cube'"
     assert sorted(t["frames"]) == t["attempted"] and t["attempted"][0] == 0 and t["attempted"][-1] == clip["n_frames"] - 1
 
 
@@ -248,7 +248,7 @@ def test_keyframe_fallback_on_low_coverage(tmp_path, clip):
         return sam_payload(sam_text({0: [(0, (300, 200, 320, 220))]}))
 
     t = track_object(_client_with(handler, tmp_path), clip["path"], "red_block", n, tmp_path / "kf")
-    assert t["fallback"]["video_coverage"] < 0.8 and t["source"] == "keyframes"
+    assert t["attempts"][0]["coverage"] < 0.8 and t["source"] == "keyframes"
 
 
 def test_no_fallback_when_video_is_good(tmp_path, clip):
@@ -364,7 +364,11 @@ def test_gate_object_rules():
     assert r["pass"] and r["start_frame"] == 3 and r["end_frame"] == n - 4
     far = {k: {"box": box} for k in range(4, n)}  # nearest start mask is 4 frames in
     assert "no mask within 3 frames of the start" in check_object(_track(far), (100, 100), (100, 100), n)["reason"]
-    assert check_object(None, (0, 0), (0, 0), n)["reason"] == "not named or no track"
+    assert check_object(None, (0, 0), (0, 0), n, named=False)["reason"] == "not named by the object-naming step"
+    empty = {"frames": {}, "coverage": 0.0, "attempts": [{"mode": "video", "phrase": "red bin", "instances": 0},
+                                                         {"mode": "probe-image", "phrase": "red box", "instances": 0}]}
+    assert check_object(empty, (0, 0), (0, 0), n)["reason"] == (
+        "named, but SAM returned no instance (video 'red bin': 0 instance(s); probe-image 'red box': 0 instance(s))")
 
 
 def test_gate_fails_when_a_bin_is_not_named(world_run, project):
@@ -374,10 +378,11 @@ def test_gate_fails_when_a_bin_is_not_named(world_run, project):
     for t in p["tracks"].values():
         t["frames"] = {int(k): v for k, v in t["frames"].items()}
     del p["tracks"]["blue_bin"]
+    p["naming"]["objects"].remove("blue_bin")
     d = DEMOS_DIR / "t1_red_in_red_bin/seed_0"
     g = sam_gate(p, json.loads((d / "initial_state.json").read_text()),
                  json.loads((d / "final_state.json").read_text()), project)
-    assert not g["pass"] and g["objects"]["blue_bin"]["reason"] == "not named or no track"
+    assert not g["pass"] and g["objects"]["blue_bin"]["reason"] == "not named by the object-naming step"
 
 
 # ---- costs ----
@@ -414,3 +419,61 @@ def test_one_failing_demo_does_not_abort_the_rest(tmp_path, project):
     assert all("ReplayMiss" in r["planner_error"] for r in planner["rows"])
     sam = demo_eval.evaluate_sam(client, ids, tmp_path)
     assert sam["passed"] == 0 and all(r["error"] for r in sam["rows"])
+
+
+# ---- phrase probing (boxes are the ones real SAM returned for the t1 seed-0 first frame) ----
+
+T1_BIN_BOX, T1_CUBE_BOX = (341, 199, 481, 322), (532, 273, 567, 310)
+
+
+def _probe_handler(n, image_answers: dict, video_answers: dict, calls: list):
+    def handler(method, path, body):
+        phrase = user_text(body).strip()
+        is_video = any(p["type"] == "input_video" for p in user_parts(body))
+        calls.append(("video" if is_video else "image", phrase))
+        if is_video:
+            boxes = video_answers.get(phrase, [])
+            return sam_payload(sam_text({k: [(i, b) for i, b in enumerate(boxes)] for k in range(n)}) if boxes else "")
+        boxes = image_answers.get(phrase, [])
+        return sam_payload(sam_text({0: [(i, b) for i, b in enumerate(boxes)]}) if boxes else "")
+    return handler
+
+
+def test_probe_finds_bin_phrase_and_tracks_the_bin_not_the_cube(tmp_path, clip):
+    from core_robot.perception.frames import save_frame
+
+    n, calls = clip["n_frames"], []
+    first = save_frame(clip["path"], 0, tmp_path / "first.png")
+    handler = _probe_handler(n, image_answers={"red box": [T1_CUBE_BOX, T1_BIN_BOX]},
+                             video_answers={"red box": [T1_CUBE_BOX, T1_BIN_BOX]}, calls=calls)
+    t = track_object(_client_with(handler, tmp_path), clip["path"], "red_bin", n, tmp_path / "kf", first_frame=first)
+    assert calls == [("video", "red bin"), ("image", "red box"), ("video", "red box")]
+    assert t["concept"] == "red box" and t["coverage"] == 1.0 and t["frames"][0]["box"] == list(T1_BIN_BOX)
+    accepted = t["probe"]["tried"][0]["instances"]
+    assert [i["plausible"] for i in accepted] == [False, True]  # the cube is rejected as bin-sized
+    assert "size range" in accepted[0]["why_not"][0]
+
+
+def test_probe_rejects_phrases_with_only_implausible_instances(tmp_path, clip):
+    from core_robot.perception.frames import save_frame
+
+    n, calls = clip["n_frames"], []
+    first = save_frame(clip["path"], 0, tmp_path / "first.png")
+    handler = _probe_handler(n, image_answers={"red box": [T1_CUBE_BOX], "red tray": [(5, 5, 200, 150)]},
+                             video_answers={}, calls=calls)
+    t = track_object(_client_with(handler, tmp_path), clip["path"], "red_bin", n, tmp_path / "kf", first_frame=first)
+    assert t["probe"]["phrase"] is None and not t["frames"]
+    assert [c for c in calls if c[0] == "image"][:4] == [("image", p) for p in
+                                                        ("red box", "red container", "red tray", "red square tray")]
+    tray = next(p for p in t["probe"]["tried"] if p["phrase"] == "red tray")["instances"][0]
+    assert not tray["plausible"] and any("off the table" in w or "not red" in w for w in tray["why_not"])
+
+
+def test_working_objects_send_no_extra_requests(tmp_path, clip):
+    from core_robot.perception.frames import save_frame
+
+    n, calls = clip["n_frames"], []
+    first = save_frame(clip["path"], 0, tmp_path / "first.png")
+    handler = _probe_handler(n, {}, {"red cube": [T1_CUBE_BOX]}, calls)
+    t = track_object(_client_with(handler, tmp_path), clip["path"], "red_block", n, tmp_path / "kf", first_frame=first)
+    assert calls == [("video", "red cube")] and t["coverage"] == 1.0 and "probe" not in t

@@ -30,9 +30,19 @@ def _contains(box, pt) -> bool:
     return box[0] <= pt[0] <= box[2] and box[1] <= pt[1] <= box[3]
 
 
-def check_object(track: dict | None, start_px, end_px, n_frames: int) -> dict:
+def _sam_attempts_text(track: dict) -> str:
+    attempts = track.get("attempts") or [{"mode": track.get("source", "video"), "phrase": track.get("concept"),
+                                          "instances": track.get("candidates", 0)}]
+    return "; ".join(f"{a['mode']} '{a['phrase']}': {a.get('instances', 0)} instance(s)" for a in attempts)
+
+
+def check_object(track: dict | None, start_px, end_px, n_frames: int, named: bool = True) -> dict:
+    if not named:
+        return {"pass": False, "reason": "not named by the object-naming step", "coverage": 0.0, "named": False}
     if not track or not track.get("frames"):
-        return {"pass": False, "reason": "not named or no track", "coverage": 0.0}
+        detail = _sam_attempts_text(track) if track else "no SAM request"
+        return {"pass": False, "reason": f"named, but SAM returned no instance ({detail})", "coverage": 0.0,
+                "named": True}
     frames = track["frames"]
     f0 = _frame_near(frames, 0, +1)
     f1 = _frame_near(frames, n_frames - 1, -1)
@@ -44,7 +54,8 @@ def check_object(track: dict | None, start_px, end_px, n_frames: int) -> dict:
         ("no mask within 3 frames of the start" if f0 is None else "start box misses the true start", not start_ok),
         ("no mask within 3 frames of the end" if f1 is None else "end box misses the true end", not end_ok),
     ) if bad]
-    return {"pass": not reasons, "reason": "; ".join(reasons), "coverage": round(track["coverage"], 3),
+    return {"pass": not reasons, "reason": "; ".join(reasons), "coverage": round(track["coverage"], 3), "named": True,
+            "phrase": track.get("concept"),
             "start_frame": f0, "end_frame": f1, "source": track.get("source"),
             "start_px": [round(v, 1) for v in start_px], "end_px": [round(v, 1) for v in end_px]}
 
@@ -57,7 +68,7 @@ def sam_gate(perception: dict, initial_state: dict, final_state: dict, project) 
         if s0["kind"] not in REQUIRED_KINDS and name not in perception["tracks"]:
             continue
         r = check_object(perception["tracks"].get(name), project(s0["position"]),
-                         project(final_state[name]["position"]), n)
+                         project(final_state[name]["position"]), n, named=name in perception["naming"]["objects"])
         r["required"] = s0["kind"] in REQUIRED_KINDS
         objects[name] = r
     return {"pass": all(o["pass"] for o in objects.values() if o["required"]), "objects": objects}

@@ -26,7 +26,8 @@ def perceive(video: str | Path, client, out_dir: str | Path, fps: float = 5.0, k
     first = save_frame(clip["path"], 0, out / "first_frame.png")
     naming = name_objects(client, first)
     tracks = {
-        name: track_object(client, clip["path"], name, clip["n_frames"], out / "keyframes" / name, keyframes)
+        name: track_object(client, clip["path"], name, clip["n_frames"], out / "keyframes" / name, keyframes,
+                           first_frame=first)
         for name in naming["objects"]
     }
     result = {
