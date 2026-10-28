@@ -88,8 +88,12 @@ def run_code(
     timeout_s: float = DEFAULT_TIMEOUT_S,
     record: bool = True,
     calibration_offset_cm: float | None = None,
+    task_spec: dict | None = None,
 ) -> dict:
     """Validate and execute `code` against a fresh scene for (task_id, exec_seed).
+
+    task_spec: for tasks outside the benchmark (a real clip's plan), how the child rebuilds the
+    task (see core_robot.real.plan_task); None for benchmark task ids.
 
     Returns {ok, exception, call_log, initial_state, final_state, video, frames, stdout,
     timed_out, rejected, sandbox_error}. sandbox_error means the harness itself failed,
@@ -109,7 +113,7 @@ def run_code(
 
     (out / "code.py").write_text(code)
     job = {"code": code, "task_id": task_id, "exec_seed": exec_seed, "out_dir": str(out), "record": record,
-           "calibration_offset_cm": calibration_offset_cm}
+           "calibration_offset_cm": calibration_offset_cm, "task_spec": task_spec}
     (out / "job.json").write_text(json.dumps(job))
     for stale in ("result.json", "calls.jsonl"):
         (out / stale).unlink(missing_ok=True)

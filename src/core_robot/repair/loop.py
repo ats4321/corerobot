@@ -60,10 +60,12 @@ def run_with_repair(
     record: bool = True,
     meta: dict | None = None,
     calibration_offset_cm: float | None = None,
+    on_attempt=None,
 ) -> dict:
     """Run one (task, exec_seed, condition). Stops at the first success. Returns the run log.
 
     meta: extra fields (e.g. run_source, plan_source) stored in the log from the first write.
+    on_attempt: optional callback, called with each finished attempt's record.
     """
     if condition not in MAX_ATTEMPTS:
         raise ValueError(f"condition must be one of {sorted(MAX_ATTEMPTS)}, got {condition!r}")
@@ -94,7 +96,8 @@ def run_with_repair(
         log["tokens_in"] += t_in
         log["tokens_out"] += t_out
         result = run_code(code, task.id, exec_seed, out / f"attempt_{attempt}", timeout_s=timeout_s, record=record,
-                          calibration_offset_cm=calibration_offset_cm)
+                          calibration_offset_cm=calibration_offset_cm,
+                          task_spec=task.spec() if hasattr(task, "spec") else None)
         gt_plan = task.ground_truth_plan(result["initial_state"]) if result["initial_state"] else plan
         chk = checker.check(task, result["final_state"], result["initial_state"], gt_plan)
         report = build_failure_report(result, chk)
@@ -122,6 +125,8 @@ def run_with_repair(
         log["attempts_used"] = attempt
         log["success"] = chk["success"]
         _write(out / "run.json", log)
+        if on_attempt is not None:  # e.g. the UI showing each attempt as it finishes
+            on_attempt(log["attempts"][-1])
         if chk["success"]:
             break
         if condition in ("B", "C"):

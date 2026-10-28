@@ -13,3 +13,7 @@ __pycache__/
 .venv/
 .pytest_cache/
 *.egg-info/
+
+# Real demonstration clips (may be private): kept out of git
+data/real/*
+!data/real/.gitkeep
