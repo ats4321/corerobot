@@ -15,8 +15,8 @@ from core_robot.demos.tasks import TASKS
 
 FAKE_BANNER = "FAKE GENERATOR: harness test only, not a result"
 CONDITIONS = ("A", "B", "C")
-CATEGORIES = ("wrong object", "wrong order", "placement error", "grasp failure", "code error", "timeout",
-              "harness error", "other")
+CATEGORIES = ("wrong object", "wrong order", "placement error", "grasp failure", "truncated output", "code error",
+              "timeout", "harness error", "other")
 SEEDS_PER_CELL = 5
 CONDITION_LABELS = {"A": "A one-shot", "B": "B repair, text", "C": "C repair, text + frame"}
 # Categorical slots 1-3 of the dataviz reference palette (validated: adjacent CVD dE >= 9.1 on light).
@@ -57,13 +57,16 @@ def _caption(rows: list[dict], env: str, what: str) -> str:
             f"date: {datetime.date.today().isoformat()}.*")
 
 
-def paired_counts(rows: list[dict]) -> dict:
+def paired_counts(rows: list[dict], exclude_truncated: bool = False) -> dict:
     """Per task and condition X in B/C, against A on the same seed: fixed (A failed, X succeeded),
-    broke (A succeeded, X failed), and how many pairs exist."""
+    broke (A succeeded, X failed), and how many pairs exist. With exclude_truncated, B/C runs
+    whose repair attempts hit the output cap or returned no code are left out."""
     a = {(r["task"], r["seed"]): int(r["success"]) for r in rows if r["condition"] == "A"}
     out: dict = defaultdict(lambda: {"fixed": 0, "broke": 0, "pairs": 0})
     for r in rows:
         if r["condition"] not in ("B", "C") or (r["task"], r["seed"]) not in a:
+            continue
+        if exclude_truncated and str(r.get("repair_truncated", "0")) == "1":
             continue
         c = out[(r["task"], r["condition"])]
         c["pairs"] += 1
@@ -116,25 +119,32 @@ def _env_section(rows: list[dict], env: str, chart_name: str | None = None) -> l
         ok = [int(r["attempts"]) for r in rows if r["condition"] == c and int(r["success"])]
         lines.append(f"| {CONDITION_LABELS[c]} | " + (f"{sum(ok) / len(ok):.2f} (n={len(ok)})" if ok else "- (n=0)") + " |")
 
-    pc = paired_counts(rows)
     rep = [c for c in ("B", "C") if c in conds]
     if "A" in conds and rep:
-        lines += ["", "### Repair versus A (paired by task and seed)", "",
-                  _caption(rows, env, "Fixed: A failed and the repair condition succeeded; broke: A succeeded "
-                                      "and the repair condition failed; pairs: seeds run in both"), "",
-                  "| Task | " + " | ".join(f"{c} fixed | {c} broke | {c} pairs" for c in rep) + " |",
-                  "|---" * (1 + 3 * len(rep)) + "|"]
-        for t in tasks:
+        n_trunc = {c: sum(1 for r in rows if r["condition"] == c and str(r.get("repair_truncated", "0")) == "1")
+                   for c in rep}
+        for title, excl in (("Repair versus A (paired by task and seed), all runs", False),
+                            ("Repair versus A, excluding runs whose repair output was truncated", True)):
+            pc = paired_counts(rows, exclude_truncated=excl)
+            note = ("Fixed: A failed and the repair condition succeeded; broke: A succeeded and the repair "
+                    "condition failed; pairs: seeds run in both")
+            if excl:
+                note += "; excluded runs with a truncated repair attempt: " + \
+                    ", ".join(f"{c} {n_trunc[c]}" for c in rep)
+            lines += ["", f"### {title}", "", _caption(rows, env, note), "",
+                      "| Task | " + " | ".join(f"{c} fixed | {c} broke | {c} pairs" for c in rep) + " |",
+                      "|---" * (1 + 3 * len(rep)) + "|"]
+            for t in tasks:
+                cells = []
+                for c in rep:
+                    v = pc.get((t, c), {"fixed": 0, "broke": 0, "pairs": 0})
+                    cells += [str(v["fixed"]), str(v["broke"]), str(v["pairs"])]
+                lines.append(f"| {t} | " + " | ".join(cells) + " |")
             cells = []
             for c in rep:
-                v = pc.get((t, c), {"fixed": 0, "broke": 0, "pairs": 0})
-                cells += [str(v["fixed"]), str(v["broke"]), str(v["pairs"])]
-            lines.append(f"| {t} | " + " | ".join(cells) + " |")
-        cells = []
-        for c in rep:
-            vs = [v for (t, cc), v in pc.items() if cc == c]
-            cells += [str(sum(v[k] for v in vs)) for k in ("fixed", "broke", "pairs")]
-        lines.append("| **total** | " + " | ".join(cells) + " |")
+                vs = [v for (t, cc), v in pc.items() if cc == c]
+                cells += [str(sum(v[k] for v in vs)) for k in ("fixed", "broke", "pairs")]
+            lines.append("| **total** | " + " | ".join(cells) + " |")
 
     lines += ["", "### Failure categories (failed runs, last attempt)", "",
               _caption(rows, env, "Failed runs by category"), "",

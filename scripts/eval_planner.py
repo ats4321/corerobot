@@ -73,15 +73,12 @@ def main() -> int:
     if args.reasoning_effort and not args.label:
         print("--reasoning-effort is an experiment: give it a --label so it does not overwrite the main results")
         return 2
-    import time
 
-    over_budget = lambda: False
-    if args.budget is not None:
-        from core_robot.perception.costs import actual_spend
+    from core_robot.meta_client import BudgetGuard
 
-        started = time.time()
-        over_budget = lambda: actual_spend(settings.log_path, started)["usd"] > args.budget
-    s = evaluate_planner(MetaClient(settings=settings), ids, out_root=out, reasoning_effort=args.reasoning_effort,
+    guard = BudgetGuard(args.budget) if args.budget is not None else None
+    over_budget = (lambda: guard.remaining() <= 0) if guard else (lambda: False)
+    s = evaluate_planner(MetaClient(settings=settings, guard=guard), ids, out_root=out, reasoning_effort=args.reasoning_effort,
                          over_budget=over_budget)
     if len(s["rows"]) and over_budget():
         print(f"BUDGET: spend passed ${args.budget:.2f}; demos after that were not started")

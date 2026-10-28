@@ -31,11 +31,11 @@ from core_robot.sim.env import TabletopEnv
 
 CONDITIONS = ("A", "B", "C")
 PLAN_SOURCES = ("ground_truth", "predicted")
-CATEGORIES = ("wrong object", "wrong order", "placement error", "grasp failure", "code error", "timeout",
-              "harness error", "other")
+CATEGORIES = ("wrong object", "wrong order", "placement error", "grasp failure", "truncated output", "code error",
+              "timeout", "harness error", "other")
 CSV_FIELDS = [
     "task", "seed", "condition", "environment", "success", "attempts", "plan_source", "plan_strict", "plan_lenient",
-    "run_source", "failure_category", "prompt_hash", "git_commit", "prompt_change_allowed", "wall_clock_s",
+    "run_source", "failure_category", "repair_truncated", "prompt_hash", "git_commit", "prompt_change_allowed", "wall_clock_s",
     "tokens_in", "tokens_out", "est_cost_usd",
 ]
 ASSUMED_TOKENS_IN = 8000
@@ -256,11 +256,25 @@ def measured_codegen_tokens(log_path: Path) -> tuple[float, float, int] | None:
 
 # ---- labelling ----
 
+def attempt_truncated(attempt: dict) -> bool:
+    """The generation ended incomplete (e.g. hit max_output_tokens) or returned no code."""
+    gen = attempt.get("generation") or {}
+    if gen.get("status") == "incomplete" or gen.get("incomplete_reason"):
+        return True
+    return "code" in attempt and attempt.get("code") is not None and not attempt["code"].strip()
+
+
+def repair_truncated(log: dict) -> bool:
+    """Any repair attempt (attempt 2 or later) of this run was truncated."""
+    return any(attempt_truncated(a) for a in log.get("attempts", [])[1:])
+
+
 def failure_category(log: dict) -> str:
     """Label a failed run from its last attempt. Returns "" for a success.
 
-    Precedence: harness error > timeout > code error > grasp failure > wrong object >
-    wrong order > placement error > other.
+    Precedence: harness error > truncated output > timeout > code error > grasp failure >
+    wrong object > wrong order > placement error > other.
+      truncated output  the last attempt's generation ended incomplete (output cap) or had no code
       harness error  generator/API/replay failure, or the sandbox itself failed
       timeout        the run exceeded the time limit
       code error     rejected by static checks, or the code raised an exception
@@ -280,6 +294,8 @@ def failure_category(log: dict) -> str:
     out = last.get("outcome", {})
     if last.get("generator_error") or out.get("generator_error") or out.get("sandbox_error"):
         return "harness error"
+    if attempt_truncated(last):
+        return "truncated output"
     if out.get("timed_out"):
         return "timeout"
     if out.get("rejected") or out.get("exception"):
@@ -315,7 +331,8 @@ def row_from_log(log: dict) -> dict:
         "success": int(bool(log["success"])), "attempts": log["attempts_used"],
         "plan_source": log.get("plan_source", ""), "plan_strict": log.get("plan_strict", ""),
         "plan_lenient": log.get("plan_lenient", ""), "run_source": log.get("run_source", ""),
-        "failure_category": failure_category(log), "prompt_hash": log.get("prompt_hash", ""),
+        "failure_category": failure_category(log), "repair_truncated": int(repair_truncated(log)),
+        "prompt_hash": log.get("prompt_hash", ""),
         "git_commit": log.get("git_commit", ""), "prompt_change_allowed": log.get("prompt_change_allowed", ""),
         "wall_clock_s": log.get("wall_clock_s", ""),
         "tokens_in": t_in, "tokens_out": t_out, "est_cost_usd": round(token_cost(t_in, t_out), 6),
@@ -346,7 +363,12 @@ def output_root(generator: str, plan_source: str, run_name: str | None = None) -
     return base / (run_name or f"{generator}_{plan_source}"), run_source
 
 
-def make_generator(name: str, settings):
+# Smallest worst-case reservation a code-generation call can need (prompt with image + full
+# 12k output cap); no new run starts once the guard cannot cover one more.
+MIN_RUN_RESERVE_USD = 0.07
+
+
+def make_generator(name: str, settings, budget: float | None = None):
     if name == "fake":
         from core_robot.eval.fake_generator import FakeGenerator
         return FakeGenerator()
@@ -354,8 +376,9 @@ def make_generator(name: str, settings):
         if not settings.api_key and not settings.replay:
             raise SystemExit("MODEL_API_KEY is not set: add it to .env, or set CORE_ROBOT_REPLAY=1 to use the cache only")
         from core_robot.codegen.muse_generator import MuseGenerator
-        from core_robot.meta_client import MetaClient
-        return MuseGenerator(MetaClient(settings=settings))
+        from core_robot.meta_client import BudgetGuard, MetaClient
+        guard = BudgetGuard(budget) if budget is not None else None
+        return MuseGenerator(MetaClient(settings=settings, guard=guard))
     raise SystemExit(f"unknown --generator {name!r}")
 
 
@@ -476,14 +499,12 @@ def main(argv=None) -> int:
                   + (f"; --budget {args.budget:.2f} stops new runs after that much spend" if args.budget else ""))
         return 0
 
-    generator = make_generator(args.generator, settings)
+    generator = make_generator(args.generator, settings, args.budget)
     t0 = time.monotonic()
-    started = time.time()
     over_budget = lambda: False
-    if args.budget is not None:
-        from core_robot.perception.costs import actual_spend
-
-        over_budget = lambda: actual_spend(settings.log_path, started)["usd"] > args.budget
+    guard = getattr(getattr(generator, "client", None), "guard", None)
+    if guard is not None:  # spent + in-flight reservations; individual calls are capped by the guard itself
+        over_budget = lambda: guard.remaining() < MIN_RUN_RESERVE_USD
     counts = run_matrix(todo, generator, root, args.plan_source, args.workers, not args.no_video, args.timeout,
                         over_budget, offset_cm, args.allow_prompt_change)
     if counts.get("over_budget"):

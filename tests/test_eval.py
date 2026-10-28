@@ -312,7 +312,33 @@ def test_report_tables_carry_environment_hash_date_and_flag_missing_runs():
     today = datetime.date.today().isoformat()
     for env in ("clean", "perturbed"):
         assert f"Environment: {env}; prompt hash: 6faa3b19e9b6; date: {today}" in md
-    assert md.count("prompt hash: 6faa3b19e9b6") == 8  # 4 tables per environment, each captioned
+    assert md.count("prompt hash: 6faa3b19e9b6") == 10  # 5 tables per environment, each captioned
     assert "Incomplete: 4 runs of this environment were not run" in md  # perturbed B has 1 of 5
     assert "| placement error | 5 | 0 |" in md
     assert "| **total** | 1 | 0 | 1 |" in md  # perturbed: B fixed 1 of 1 pair
+
+
+
+def test_truncated_output_label_and_exclusion():
+    from core_robot.eval.report import paired_counts
+    from core_robot.eval.run_eval import attempt_truncated, repair_truncated
+
+    trunc = {"attempt": 2, "code": "", "generation": {"status": "incomplete", "incomplete_reason": "max_output_tokens"},
+             "outcome": {"rejected": True, "exception": "rejected before running"}, "call_log": []}
+    empty = {"attempt": 2, "code": "   ", "generation": {"status": "completed"}, "outcome": {}, "call_log": []}
+    ok = {"attempt": 2, "code": "def run(robot, scene):\n    pass\n", "generation": {"status": "completed"},
+          "outcome": {}, "call_log": []}
+    assert attempt_truncated(trunc) and attempt_truncated(empty) and not attempt_truncated(ok)
+    log = {"task_id": "t4_stack_three", "success": False,
+           "attempts": [{**ok, "attempt": 1, "initial_state": T4_INIT}, trunc]}
+    assert failure_category(log) == "truncated output"  # outranks the code error it caused
+    assert repair_truncated(log)
+    log2 = {**log, "attempts": [{**ok, "attempt": 1, "initial_state": T4_INIT}, trunc,
+                                 {**ok, "attempt": 3, "initial_state": T4_INIT}]}
+    assert repair_truncated(log2) and failure_category(log2) != "truncated output"  # last attempt was complete
+
+    t = "t4_stack_three"
+    rows = [_row(t, 100, "A", 0), {**_row(t, 100, "B", 1), "repair_truncated": "0"},
+            _row(t, 101, "A", 0), {**_row(t, 101, "B", 0), "repair_truncated": "1"}]
+    assert paired_counts(rows)[(t, "B")] == {"fixed": 1, "broke": 0, "pairs": 2}
+    assert paired_counts(rows, exclude_truncated=True)[(t, "B")] == {"fixed": 1, "broke": 0, "pairs": 1}

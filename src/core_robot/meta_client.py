@@ -49,6 +49,68 @@ class ReplayMiss(Exception):
     """Raised in replay mode when a request is not in the cache."""
 
 
+class BudgetExceeded(RuntimeError):
+    """Raised before sending a request whose worst-case cost could exceed the budget."""
+
+
+class BudgetGuard:
+    """Hard spending cap shared by every thread using one client.
+
+    Before an uncached request is sent, its worst-case cost is reserved; the request is refused
+    if spent + all outstanding reservations + this reservation would exceed the budget. After
+    the response, the reservation is replaced by the actual cost. A request that fails keeps its
+    full reservation as spent (it may have been billed). So requests already in flight can never
+    push spending past the budget.
+    """
+
+    def __init__(self, budget_usd: float):
+        self.budget = float(budget_usd)
+        self.spent = 0.0
+        self.reserved = 0.0
+        self._lock = threading.Lock()
+
+    def reserve(self, usd: float, what: str = "request") -> None:
+        with self._lock:
+            if self.spent + self.reserved + usd > self.budget + 1e-12:
+                raise BudgetExceeded(
+                    f"budget ${self.budget:.2f}: spent ${self.spent:.4f} + in flight ${self.reserved:.4f} "
+                    f"+ worst case ${usd:.4f} for this {what} would exceed it")
+            self.reserved += usd
+
+    def settle(self, reserved_usd: float, actual_usd: float) -> None:
+        with self._lock:
+            self.reserved -= reserved_usd
+            self.spent += actual_usd
+
+    def remaining(self) -> float:
+        with self._lock:
+            return self.budget - self.spent - self.reserved
+
+
+# Worst-case input sizes used for reservations (tokens); generous by design.
+_IMAGE_TOKEN_BOUND = 4000
+_VIDEO_TOKEN_BOUND = 40000
+_DEFAULT_OUTPUT_BOUND = 32000
+
+
+def _muse_cost(t_in: float, t_out: float) -> float:
+    from core_robot.config import PRICE_INPUT_PER_M, PRICE_OUTPUT_PER_M
+
+    return t_in * PRICE_INPUT_PER_M / 1e6 + t_out * PRICE_OUTPUT_PER_M / 1e6
+
+
+def _video_frames(path: Path) -> int:
+    try:
+        import imageio.v2 as imageio
+
+        reader = imageio.get_reader(str(path))
+        n = reader.count_frames()
+        reader.close()
+        return int(n)
+    except Exception:
+        return 15000  # unknown: the API's per-request maximum
+
+
 class Transport(Protocol):
     def __call__(
         self, method: str, path: str, json_body: dict | None = None, upload: Path | None = None
@@ -169,6 +231,7 @@ class MetaClient:
     settings: Settings = field(default_factory=load_settings)
     transport: Transport | None = None
     sleep: Callable[[float], None] = time.sleep
+    guard: BudgetGuard | None = None
 
     def __post_init__(self):
         self.settings.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -206,7 +269,10 @@ class MetaClient:
         schema: optional JSON schema; sets text.format to json_schema and parses the reply.
         """
         body = self._muse_body(text, images, video, video_mode, schema, system, max_output_tokens, reasoning_effort)
-        return self._muse_result(self._responses(body), body, schema)
+        t_in = (len(text) + len(system or "") + len(json.dumps(schema or {}))) / 2 \
+            + _IMAGE_TOKEN_BOUND * len(images or []) + (_VIDEO_TOKEN_BOUND if video is not None else 0)
+        worst = _muse_cost(t_in, max_output_tokens or _DEFAULT_OUTPUT_BOUND)
+        return self._muse_result(self._responses(body, worst, "muse"), body, schema)
 
     def muse_request_key(self, text: str, **kw) -> str:
         """The cache key muse(text, **kw) would use, without sending anything."""
@@ -250,20 +316,26 @@ class MetaClient:
 
     def sam_image(self, image: Path, prompt: str, metadata: dict | None = None) -> dict:
         """Segment an image with a concept prompt (a short noun phrase)."""
-        return self._sam({"type": "input_image", "image_url": _MediaRef(Path(image), "url")}, prompt, metadata)
+        from core_robot.config import SAM_PRICE_PER_IMAGE
+
+        return self._sam({"type": "input_image", "image_url": _MediaRef(Path(image), "url")}, prompt, metadata,
+                         SAM_PRICE_PER_IMAGE)
 
     def sam_video(self, video: Path, prompt: str, video_mode: str = "inline", metadata: dict | None = None) -> dict:
         """Segment and track a concept across a video. video_mode: "inline" or "file"."""
+        from core_robot.config import SAM_MIN_FRAMES, SAM_PRICE_PER_FRAME
+
         part = (
             {"type": "input_video", "file_id": _MediaRef(Path(video), "file")}
             if video_mode == "file"
             else {"type": "input_video", "video_url": _MediaRef(Path(video), "url")}
         )
-        return self._sam(part, prompt, metadata)
+        worst = max(SAM_MIN_FRAMES, _video_frames(Path(video))) * SAM_PRICE_PER_FRAME
+        return self._sam(part, prompt, metadata, worst)
 
     # ---- internals ----
 
-    def _sam(self, media_part: dict, prompt: str, metadata: dict | None) -> dict:
+    def _sam(self, media_part: dict, prompt: str, metadata: dict | None, worst_usd: float = 0.0) -> dict:
         body: dict[str, Any] = {
             "model": self.settings.sam_model,
             "input": [
@@ -272,13 +344,14 @@ class MetaClient:
         }
         if metadata:
             body["metadata"] = metadata
-        resp = self._responses(body)
+        resp = self._responses(body, worst_usd, "sam")
         text = output_text(resp)
         return {"text": text, "frames": parse_sam(text), "raw": resp}
 
-    def _responses(self, body: dict) -> dict:
+    def _responses(self, body: dict, worst_usd: float = 0.0, what: str = "request") -> dict:
         logical = _logical(body)
-        return self._call(body["model"], logical, lambda: ("POST", "/responses", _materialize(body, self._upload)))
+        return self._call(body["model"], logical, lambda: ("POST", "/responses", _materialize(body, self._upload)),
+                          worst_usd, what)
 
     def _upload(self, path: Path) -> str:
         digest = _sha256_file(path)
@@ -295,7 +368,8 @@ class MetaClient:
             self.transport = HttpxTransport(self.settings)
         return self.transport
 
-    def _call(self, model: str, logical: dict, build: Callable[[], tuple]) -> dict:
+    def _call(self, model: str, logical: dict, build: Callable[[], tuple], worst_usd: float = 0.0,
+              what: str = "request") -> dict:
         """Cache lookup, then (once per key) the network call.
 
         Identical requests issued concurrently (e.g. attempt 1 of conditions A, B and C running
@@ -323,13 +397,23 @@ class MetaClient:
             waiting_on.wait()  # another caller is sending it; then re-check the cache
         try:
             t0 = time.monotonic()
+            if self.guard is not None:
+                try:
+                    self.guard.reserve(worst_usd, what)
+                except BudgetExceeded as e:
+                    self._log(model, key, kind, cache_hit=False, latency_s=0.0, resp=None, error=f"budget: {e}")
+                    raise
             try:
                 method, api_path, body = build()
                 resp = self._send_with_retries(lambda: self._transport()(method, api_path, body, None))
             except Exception as e:
+                if self.guard is not None:
+                    self.guard.settle(worst_usd, worst_usd)  # may have been billed: count the worst case
                 self._log(model, key, kind, cache_hit=False, latency_s=time.monotonic() - t0, resp=None,
                           error=str(e)[:500])
                 raise
+            if self.guard is not None:
+                self.guard.settle(worst_usd, _actual_cost(model, kind, resp, worst_usd))
             latency = time.monotonic() - t0
             tmp = path.with_suffix(f".{threading.get_ident()}.tmp")
             tmp.write_text(json.dumps({"request": logical, "response": resp}))
@@ -381,6 +465,21 @@ class _MediaRef:
 
     path: Path
     mode: str
+
+
+def _actual_cost(model: str, kind: str, resp: dict, worst_usd: float) -> float:
+    """Billed cost of a response; the reservation itself when the usage does not say."""
+    from core_robot.config import SAM_PRICE_PER_FRAME, SAM_PRICE_PER_IMAGE
+
+    usage = (resp or {}).get("usage") or {}
+    if model.startswith("sam"):
+        if kind == "video":
+            frames = usage.get("video_frames_processed")
+            return frames * SAM_PRICE_PER_FRAME if frames is not None else worst_usd
+        return SAM_PRICE_PER_IMAGE
+    if model.startswith("muse"):
+        return _muse_cost(*usage_tokens(resp))
+    return 0.0
 
 
 def _media_kind(logical: dict) -> str:
