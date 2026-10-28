@@ -34,7 +34,8 @@ PLAN_SOURCES = ("ground_truth", "predicted")
 CATEGORIES = ("wrong object", "wrong order", "grasp failure", "code error", "timeout", "harness error", "other")
 CSV_FIELDS = [
     "task", "seed", "condition", "environment", "success", "attempts", "plan_source", "plan_strict", "plan_lenient",
-    "run_source", "failure_category", "wall_clock_s", "tokens_in", "tokens_out", "est_cost_usd",
+    "run_source", "failure_category", "prompt_hash", "git_commit", "prompt_change_allowed", "wall_clock_s",
+    "tokens_in", "tokens_out", "est_cost_usd",
 ]
 ASSUMED_TOKENS_IN = 8000
 ASSUMED_TOKENS_OUT = 1500
@@ -135,8 +136,25 @@ def plan_for(task, seed: int, plan_source: str, planner_results: Path | None = N
         env.close()
 
 
+def provenance(prompt_change_allowed: bool = False) -> dict:
+    from core_robot.prompt_freeze import git_commit, prompt_hash
+
+    return {"prompt_hash": prompt_hash(), "git_commit": git_commit(),
+            "prompt_change_allowed": int(bool(prompt_change_allowed))}
+
+
+def check_prompt_freeze(allow_change: bool) -> None:
+    """Refuse to run when the prompts differ from the frozen ones, unless explicitly allowed."""
+    from core_robot.prompt_freeze import frozen, prompt_hash
+
+    f = frozen()
+    if prompt_hash() != f["prompt_hash"] and not allow_change:
+        raise SystemExit(f"prompts changed since {f['tag']} (hash {prompt_hash()} != frozen {f['prompt_hash']}); "
+                         "pass --allow-prompt-change to run anyway (recorded in results.csv)")
+
+
 def run_one(spec: RunSpec, generator, root: Path, plan_source: str, record: bool, timeout_s: float,
-            over_budget=lambda: False, offset_cm: float | None = None) -> str:
+            over_budget=lambda: False, offset_cm: float | None = None, prov: dict | None = None) -> str:
     """Execute one run unless it is already finished. Returns "done", "skipped" or "over_budget"."""
     environment = "perturbed" if offset_cm else "clean"
     if is_finished(root, spec, environment):
@@ -147,7 +165,7 @@ def run_one(spec: RunSpec, generator, root: Path, plan_source: str, record: bool
     out = run_path(root, spec, environment)
     t0 = time.monotonic()
     meta = {"plan_source": plan_source, "run_source": generator.run_source, "generator": generator.name,
-            "environment": "perturbed" if offset_cm else "clean"}
+            "environment": "perturbed" if offset_cm else "clean", **(prov or provenance())}
     if offset_cm:
         meta["calibration_offset_cm"] = offset_cm
     if plan_source == "predicted":
@@ -176,13 +194,15 @@ def run_one(spec: RunSpec, generator, root: Path, plan_source: str, record: bool
 
 
 def run_matrix(runs, generator, root: Path, plan_source="ground_truth", workers=4, record=True,
-               timeout_s=60.0, over_budget=lambda: False, offset_cm: float | None = None) -> Counter:
+               timeout_s=60.0, over_budget=lambda: False, offset_cm: float | None = None,
+               prompt_change_allowed: bool = False) -> Counter:
     """Run (or resume) the given runs. over_budget() is checked before each run starts; once
     it returns True no new runs start (runs already started finish)."""
     root.mkdir(parents=True, exist_ok=True)
+    prov = provenance(prompt_change_allowed)
     with ThreadPoolExecutor(max_workers=workers) as pool:
         outcomes = list(pool.map(
-            lambda s: run_one(s, generator, root, plan_source, record, timeout_s, over_budget, offset_cm), runs))
+            lambda s: run_one(s, generator, root, plan_source, record, timeout_s, over_budget, offset_cm, prov), runs))
     write_results_csv(root)
     return Counter(outcomes)
 
@@ -289,7 +309,9 @@ def row_from_log(log: dict) -> dict:
         "success": int(bool(log["success"])), "attempts": log["attempts_used"],
         "plan_source": log.get("plan_source", ""), "plan_strict": log.get("plan_strict", ""),
         "plan_lenient": log.get("plan_lenient", ""), "run_source": log.get("run_source", ""),
-        "failure_category": failure_category(log), "wall_clock_s": log.get("wall_clock_s", ""),
+        "failure_category": failure_category(log), "prompt_hash": log.get("prompt_hash", ""),
+        "git_commit": log.get("git_commit", ""), "prompt_change_allowed": log.get("prompt_change_allowed", ""),
+        "wall_clock_s": log.get("wall_clock_s", ""),
         "tokens_in": t_in, "tokens_out": t_out, "est_cost_usd": round(token_cost(t_in, t_out), 6),
     }
 
@@ -380,6 +402,8 @@ def main(argv=None) -> int:
     ap.add_argument("--run-name", default=None, help="subdirectory name (default: <generator>_<plan_source>)")
     ap.add_argument("--no-video", action="store_true")
     ap.add_argument("--timeout", type=float, default=60.0)
+    ap.add_argument("--allow-prompt-change", action="store_true",
+                    help="run even though prompts differ from the frozen ones (recorded in results.csv)")
     ap.add_argument("--environment", default="clean", choices=["clean", "perturbed"])
     ap.add_argument("--offset-cm", type=float, default=None,
                     help="perturbed only: calibration_offset magnitude; only for pilot seeds (evaluation seeds use "
@@ -388,6 +412,7 @@ def main(argv=None) -> int:
                     help="USD: stop starting new runs once actual API spend since this command started exceeds it")
     args = ap.parse_args(argv)
 
+    check_prompt_freeze(args.allow_prompt_change)
     settings = load_settings()
     replay = settings.replay
     root, run_source = output_root(args.generator, args.plan_source, args.run_name)
@@ -454,7 +479,7 @@ def main(argv=None) -> int:
 
         over_budget = lambda: actual_spend(settings.log_path, started)["usd"] > args.budget
     counts = run_matrix(todo, generator, root, args.plan_source, args.workers, not args.no_video, args.timeout,
-                        over_budget, offset_cm)
+                        over_budget, offset_cm, args.allow_prompt_change)
     if counts.get("over_budget"):
         print(f"BUDGET: {counts['over_budget']} runs not started (spend passed ${args.budget:.2f})")
     from core_robot.eval.report import write_report
