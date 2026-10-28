@@ -205,6 +205,18 @@ class MetaClient:
                or uploaded via the Files API and referenced by file_id (video_mode="file").
         schema: optional JSON schema; sets text.format to json_schema and parses the reply.
         """
+        body = self._muse_body(text, images, video, video_mode, schema, system, max_output_tokens, reasoning_effort)
+        return self._muse_result(self._responses(body), body, schema)
+
+    def muse_request_key(self, text: str, **kw) -> str:
+        """The cache key muse(text, **kw) would use, without sending anything."""
+        return request_key(_logical(self._muse_body(text, **kw)))
+
+    def is_cached(self, key: str) -> bool:
+        return (self.settings.cache_dir / f"{key}.json").exists()
+
+    def _muse_body(self, text, images=None, video=None, video_mode="inline", schema=None, system=None,
+                   max_output_tokens=None, reasoning_effort=None) -> dict:
         parts: list[dict] = [{"type": "input_text", "text": text}]
         for img in images or []:
             parts.append({"type": "input_image", "image_url": _MediaRef(Path(img), "url")})
@@ -223,7 +235,9 @@ class MetaClient:
             body["max_output_tokens"] = max_output_tokens
         if reasoning_effort:
             body["reasoning"] = {"effort": reasoning_effort}
-        resp = self._responses(body)
+        return body
+
+    def _muse_result(self, resp, body, schema):
         out = {"text": output_text(resp), "raw": resp, "usage": usage_tokens(resp), "status": resp.get("status"),
                "request_key": request_key(_logical(body)),
                "incomplete_reason": (resp.get("incomplete_details") or {}).get("reason")}

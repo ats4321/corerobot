@@ -33,8 +33,8 @@ CONDITIONS = ("A", "B", "C")
 PLAN_SOURCES = ("ground_truth", "predicted")
 CATEGORIES = ("wrong object", "wrong order", "grasp failure", "code error", "timeout", "harness error", "other")
 CSV_FIELDS = [
-    "task", "seed", "condition", "success", "attempts", "plan_source", "run_source", "failure_category",
-    "wall_clock_s", "tokens_in", "tokens_out", "est_cost_usd",
+    "task", "seed", "condition", "environment", "success", "attempts", "plan_source", "plan_strict", "plan_lenient",
+    "run_source", "failure_category", "wall_clock_s", "tokens_in", "tokens_out", "est_cost_usd",
 ]
 ASSUMED_TOKENS_IN = 8000
 ASSUMED_TOKENS_OUT = 1500
@@ -102,6 +102,11 @@ PREDICTED_PLAN_DEMO_SEED = 0
 
 def predicted_plan(task, planner_results: Path | None = None) -> Plan:
     """The cached predicted plan from the task's seed-0 demo (scripts/eval_planner.py)."""
+    return predicted_plan_row(task, planner_results)[0]
+
+
+def predicted_plan_row(task, planner_results: Path | None = None) -> tuple[Plan, dict]:
+    """(plan, planner result row) for the task's seed-0 demo; the row carries its strict/lenient score."""
     from core_robot.eval.demo_eval import PLANNER_DIR
 
     path = planner_results or PLANNER_DIR / "results.json"
@@ -114,7 +119,7 @@ def predicted_plan(task, planner_results: Path | None = None) -> Plan:
         raise NoPredictedPlan(f"no planner result for demo {demo}")
     if not row.get("plan"):
         raise NoPredictedPlan(f"the planner produced no valid plan for demo {demo}: {row.get('planner_error')}")
-    return Plan.model_validate(row["plan"])
+    return Plan.model_validate(row["plan"]), row
 
 
 def plan_for(task, seed: int, plan_source: str, planner_results: Path | None = None) -> Plan:
@@ -137,7 +142,15 @@ def run_one(spec: RunSpec, generator, root: Path, plan_source: str, record: bool
     task = TASKS_BY_ID[spec.task_id]
     out = run_path(root, spec)
     t0 = time.monotonic()
-    meta = {"plan_source": plan_source, "run_source": generator.run_source, "generator": generator.name}
+    meta = {"plan_source": plan_source, "run_source": generator.run_source, "generator": generator.name,
+            "environment": "clean"}
+    if plan_source == "predicted":
+        try:
+            _, prow = predicted_plan_row(task)
+            meta.update(plan_demo=prow["demo"], plan_strict=int(bool(prow.get("strict"))),
+                        plan_lenient=int(bool(prow.get("lenient"))))
+        except NoPredictedPlan:
+            pass
     try:
         plan = plan_for(task, spec.seed, plan_source)
     except NoPredictedPlan as e:
@@ -166,6 +179,26 @@ def run_matrix(runs, generator, root: Path, plan_source="ground_truth", workers=
             lambda s: run_one(s, generator, root, plan_source, record, timeout_s, over_budget), runs))
     write_results_csv(root)
     return Counter(outcomes)
+
+
+def attempt_one_cache_status(runs, plan_source: str, settings) -> tuple[int, int]:
+    """(runs whose attempt-1 generation is not cached yet, maximum repair generations for B/C)."""
+    from core_robot.codegen.muse_generator import MuseGenerator
+    from core_robot.codegen.scene import exec_initial_state, read_only_scene
+    from core_robot.meta_client import MetaClient
+
+    gen = MuseGenerator(MetaClient(settings=settings))
+    new = 0
+    for r in runs:
+        task = TASKS_BY_ID[r.task_id]
+        try:
+            plan = plan_for(task, r.seed, plan_source)
+        except NoPredictedPlan:
+            continue
+        key = gen.request_key(plan=plan, scene=read_only_scene(exec_initial_state(task, r.seed)))
+        new += not gen.client.is_cached(key)
+    repairs = sum(MAX_ATTEMPTS[r.condition] - 1 for r in runs)
+    return new, repairs
 
 
 def measured_codegen_tokens(log_path: Path) -> tuple[float, float, int] | None:
@@ -233,8 +266,10 @@ def row_from_log(log: dict) -> dict:
     t_in, t_out = int(log.get("tokens_in", 0)), int(log.get("tokens_out", 0))
     return {
         "task": log["task_id"], "seed": log["exec_seed"], "condition": log["condition"],
+        "environment": log.get("environment", "clean"),
         "success": int(bool(log["success"])), "attempts": log["attempts_used"],
-        "plan_source": log.get("plan_source", ""), "run_source": log.get("run_source", ""),
+        "plan_source": log.get("plan_source", ""), "plan_strict": log.get("plan_strict", ""),
+        "plan_lenient": log.get("plan_lenient", ""), "run_source": log.get("run_source", ""),
         "failure_category": failure_category(log), "wall_clock_s": log.get("wall_clock_s", ""),
         "tokens_in": t_in, "tokens_out": t_out, "est_cost_usd": round(token_cost(t_in, t_out), 6),
     }
@@ -246,7 +281,7 @@ def write_results_csv(root: Path) -> Path:
         log = json.loads(p.read_text())
         if log.get("finished"):
             rows.append(row_from_log(log))
-    rows.sort(key=lambda r: (r["task"], r["condition"], int(r["seed"])))
+    rows.sort(key=lambda r: (r["environment"], r["task"], r["condition"], int(r["seed"])))
     path = root / "results.csv"
     with open(path, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=CSV_FIELDS)
@@ -332,6 +367,14 @@ def main(argv=None) -> int:
         )
         if run_source == "live":
             from core_robot.codegen.muse_generator import DEFAULT_MAX_OUTPUT_TOKENS
+
+            if settings.api_key or settings.replay:
+                new1, repairs = attempt_one_cache_status(todo, args.plan_source, settings)
+                per = token_cost(*(measured[:2])) if measured else token_cost(ASSUMED_TOKENS_IN, ASSUMED_TOKENS_OUT)
+                print(f"cache check: attempt 1 needs a new generation in {new1} of {len(todo)} runs "
+                      f"(the rest are cached); conditions B/C add at most {repairs} repair generations")
+                print(f"expected new spend: ({new1} + up to {repairs}) x ${per:.4f} = ${new1 * per:.2f} "
+                      f"to ${(new1 + repairs) * per:.2f}")
 
             if measured:
                 m_in, m_out, n = measured
