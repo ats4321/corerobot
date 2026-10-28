@@ -31,7 +31,8 @@ from core_robot.sim.env import TabletopEnv
 
 CONDITIONS = ("A", "B", "C")
 PLAN_SOURCES = ("ground_truth", "predicted")
-CATEGORIES = ("wrong object", "wrong order", "grasp failure", "code error", "timeout", "harness error", "other")
+CATEGORIES = ("wrong object", "wrong order", "placement error", "grasp failure", "code error", "timeout",
+              "harness error", "other")
 CSV_FIELDS = [
     "task", "seed", "condition", "environment", "success", "attempts", "plan_source", "plan_strict", "plan_lenient",
     "run_source", "failure_category", "prompt_hash", "git_commit", "prompt_change_allowed", "wall_clock_s",
@@ -259,7 +260,7 @@ def failure_category(log: dict) -> str:
     """Label a failed run from its last attempt. Returns "" for a success.
 
     Precedence: harness error > timeout > code error > grasp failure > wrong object >
-    wrong order > other.
+    wrong order > placement error > other.
       harness error  generator/API/replay failure, or the sandbox itself failed
       timeout        the run exceeded the time limit
       code error     rejected by static checks, or the code raised an exception
@@ -267,6 +268,9 @@ def failure_category(log: dict) -> str:
       wrong object   picked a block the ground-truth plan does not move, disturbed a block
                      that must stay, or never picked a block the ground-truth plan moves
       wrong order    picked exactly the ground-truth plan's objects, in a different order
+      placement error  the right objects in the right order and every primitive returned ok,
+                     but the goal was not met (objects ended off target)
+      other          anything else (e.g. a non-grasp primitive failed)
     """
     if log.get("success"):
         return ""
@@ -291,6 +295,8 @@ def failure_category(log: dict) -> str:
         return "wrong object"
     if sorted(picked) == sorted(gt_objects) and picked != gt_objects:
         return "wrong order"
+    if calls and all(c["ok"] for c in calls):
+        return "placement error"  # every primitive returned ok, yet the goal was not met
     return "other"
 
 
@@ -483,9 +489,9 @@ def main(argv=None) -> int:
     if counts.get("over_budget"):
         print(f"BUDGET: {counts['over_budget']} runs not started (spend passed ${args.budget:.2f})")
     from core_robot.eval.report import write_report
-    md, png = write_report(root)
+    md, charts = write_report(root)
     print(f"{counts.get('done', 0)} runs executed, {len(runs) - len(todo)} skipped, "
-          f"{time.monotonic() - t0:.0f} s -> {root / 'results.csv'}, {md}, {png}")
+          f"{time.monotonic() - t0:.0f} s -> {root / 'results.csv'}, {md}, {', '.join(str(c) for c in charts)}")
     return 0
 
 

@@ -85,9 +85,9 @@ def test_small_matrix_rows_and_banner(small_run):
         ("t7_swap_red_blue", "C"): ("0", "3", "code error"),
     }
     assert {r["run_source"] for r in rows} == {"fake"} and {r["est_cost_usd"] for r in rows} == {"0.0"}
-    md, png = write_report(root)
+    md, charts = write_report(root)
     assert md.read_text().startswith(f"> **{FAKE_BANNER}**")
-    assert png.stat().st_size > 10_000
+    assert [c.name for c in charts] == ["results_chart_clean.png"] and charts[0].stat().st_size > 10_000
 
 
 def test_resume_skips_finished_and_redoes_unfinished(small_run):
@@ -171,7 +171,10 @@ def pick(obj, ok=True, reason=""):
     (mklog(calls=[pick("green_block"), pick("blue_block")],
            unmoved=[{"block": "red_block", "ok": False, "moved_cm": 4.0}]), "wrong object"),  # disturbed red
     (mklog(calls=[pick("blue_block"), pick("green_block")]), "wrong order"),
-    (mklog(calls=[pick("green_block"), pick("blue_block")]), "other"),
+    (mklog(calls=[pick("green_block"), pick("blue_block")]), "placement error"),  # all ok, goal missed
+    (mklog(calls=[pick("green_block"), pick("blue_block"),
+                  {"primitive": "place", "args": {"obj": "blue_block", "target": "x"}, "ok": False,
+                   "reason": "unknown target 'x'"}]), "other"),
 ])
 def test_failure_category(log, expected):
     assert failure_category(log) == expected
@@ -275,3 +278,41 @@ def test_clean_and_perturbed_runs_do_not_collide(tmp_path):
     assert sorted(r["environment"] for r in rows) == ["clean", "perturbed"]
     by_env = {r["environment"]: r for r in rows}
     assert by_env["clean"]["success"] == "1" and by_env["perturbed"]["success"] == "0"  # 4 cm breaks the stack
+
+
+
+# ---- report: paired counts, captions, incomplete cells ----
+
+def _row(task, seed, cond, ok, env="clean", cat=""):
+    return {"task": task, "seed": seed, "condition": cond, "environment": env, "success": ok, "attempts": 1,
+            "plan_source": "predicted", "plan_strict": "1", "plan_lenient": "1", "run_source": "live",
+            "failure_category": cat, "prompt_hash": "6faa3b19e9b6", "git_commit": "abc", "prompt_change_allowed": "0",
+            "tokens_in": 0, "tokens_out": 0, "est_cost_usd": 0}
+
+
+def test_paired_counts_fixed_and_broke():
+    from core_robot.eval.report import paired_counts
+
+    t = "t3_stack_green_on_red"
+    rows = [_row(t, 100, "A", 0), _row(t, 100, "B", 1), _row(t, 100, "C", 0),
+            _row(t, 101, "A", 1), _row(t, 101, "B", 0), _row(t, 101, "C", 1),
+            _row(t, 102, "B", 1)]  # no A for seed 102: not a pair
+    pc = paired_counts(rows)
+    assert pc[(t, "B")] == {"fixed": 1, "broke": 1, "pairs": 2}
+    assert pc[(t, "C")] == {"fixed": 0, "broke": 0, "pairs": 2}
+
+
+def test_report_tables_carry_environment_hash_date_and_flag_missing_runs():
+    import datetime
+
+    rows = [_row("t1_red_in_red_bin", s, c, 1) for s in range(100, 105) for c in "ABC"]
+    rows += [_row("t1_red_in_red_bin", s, "A", 0, "perturbed", "placement error") for s in range(100, 105)]
+    rows += [_row("t1_red_in_red_bin", 100, "B", 1, "perturbed")]
+    md = build_markdown(rows)
+    today = datetime.date.today().isoformat()
+    for env in ("clean", "perturbed"):
+        assert f"Environment: {env}; prompt hash: 6faa3b19e9b6; date: {today}" in md
+    assert md.count("prompt hash: 6faa3b19e9b6") == 8  # 4 tables per environment, each captioned
+    assert "Incomplete: 4 runs of this environment were not run" in md  # perturbed B has 1 of 5
+    assert "| placement error | 5 | 0 |" in md
+    assert "| **total** | 1 | 0 | 1 |" in md  # perturbed: B fixed 1 of 1 pair
