@@ -58,4 +58,5 @@ class MuseGenerator:
             max_output_tokens=self.max_output_tokens,
         )
         t_in, t_out = r["usage"]
-        return {"code": extract_code(r), "tokens_in": t_in, "tokens_out": t_out}
+        return {"code": extract_code(r), "tokens_in": t_in, "tokens_out": t_out, "request_key": r["request_key"],
+                "status": r.get("status"), "incomplete_reason": r.get("incomplete_reason")}

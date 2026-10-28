@@ -57,7 +57,8 @@ def test_prompt_contents_and_request_shape(settings, scene):
     gen = MuseGenerator(MetaClient(settings=settings, transport=t))
     plan = T1.ground_truth_plan(exec_initial_state(T1, SEED))
     out = gen(task=T1, plan=plan, attempt=1, scene=scene)
-    assert out == {"code": RIGHT, "tokens_in": 4321, "tokens_out": 210}
+    assert {k: out[k] for k in ("code", "tokens_in", "tokens_out")} == {"code": RIGHT, "tokens_in": 4321, "tokens_out": 210}
+    assert len(out["request_key"]) == 64 and out["status"] == "completed"
     (body,) = t.bodies()
     text = user_text(body)
     assert body["model"] == "muse-spark-1.3"
@@ -155,3 +156,71 @@ def test_tasks_filter():
         ("t7_swap_red_blue", "A"), ("t7_swap_red_blue", "B"), ("t7_swap_red_blue", "C")]
     with pytest.raises(SystemExit):
         resolve_tasks("t9")
+
+
+
+# ---- paired attempt 1 across conditions ----
+
+class CountingHandler:
+    """Every network call returns a different code variant (like a sampling model), slowly,
+    so parallel identical requests would get different answers if they were not coalesced."""
+
+    def __init__(self):
+        import threading
+
+        self.n = 0
+        self.lock = threading.Lock()
+
+    def __call__(self, method, path, body):
+        import time
+
+        with self.lock:
+            self.n += 1
+            n = self.n
+        time.sleep(0.3)
+        code = (RIGHT if "previous attempt failed" in user_text(body) else WRONG) + f"# variant {n}\n"
+        return code_reply(code, input_tokens=1700, output_tokens=700 + n)
+
+
+def test_concurrent_identical_requests_are_sent_once(settings):
+    from concurrent.futures import ThreadPoolExecutor
+
+    h = CountingHandler()
+    t = ScriptedTransport(h)
+    client = MetaClient(settings=settings, transport=t)
+    with ThreadPoolExecutor(4) as pool:
+        outs = list(pool.map(lambda _: client.muse("same prompt", max_output_tokens=100), range(4)))
+    assert len(t.calls) == 1 and len({o["text"] for o in outs}) == 1 and len({o["request_key"] for o in outs}) == 1
+
+
+def test_attempt_one_is_shared_across_conditions_in_parallel(settings, tmp_path):
+    import json as _json
+
+    h = CountingHandler()
+    t = ScriptedTransport(h)
+    gen = MuseGenerator(MetaClient(settings=settings, transport=t))
+    specs = [RunSpec("t1_red_in_red_bin", SEED, c) for c in "ABC"]
+    run_matrix(specs, gen, tmp_path, workers=3, record=False)
+    logs = {c: _json.loads((tmp_path / "t1_red_in_red_bin" / c / f"seed_{SEED}" / "run.json").read_text()) for c in "ABC"}
+    first = [logs[c]["attempts"][0] for c in "ABC"]
+    assert len({a["code"] for a in first}) == 1
+    assert len({a["generation"]["request_key"] for a in first}) == 1
+    assert len({(a["tokens_in"], a["tokens_out"]) for a in first}) == 1
+    attempt1_calls = [b for b in t.bodies() if "previous attempt failed" not in user_text(b)]
+    assert len(attempt1_calls) == 1  # one billed generation for attempt 1, shared by A, B and C
+    # B and C differ from A only after the first failure; each attempt starts from a fresh reset
+    for c in "BC":
+        assert logs[c]["attempts"][1]["feedback_given"] and logs[c]["attempts"][1]["code"] != first[0]["code"]
+        assert logs[c]["attempts"][1]["initial_state"] == logs[c]["attempts"][0]["initial_state"]
+
+
+def test_b_and_c_reuse_attempt_one_after_a_has_run(settings, tmp_path):
+    h = CountingHandler()
+    t = ScriptedTransport(h)
+    gen = MuseGenerator(MetaClient(settings=settings, transport=t))
+    run_matrix([RunSpec("t1_red_in_red_bin", SEED, "A")], gen, tmp_path, record=False)
+    assert len(t.calls) == 1
+    run_matrix([RunSpec("t1_red_in_red_bin", SEED, "B"), RunSpec("t1_red_in_red_bin", SEED, "C")], gen, tmp_path,
+               workers=2, record=False)
+    fresh = [b for b in t.bodies()[1:] if "previous attempt failed" not in user_text(b)]
+    assert fresh == []  # attempt 1 of B and C came from the cache written by A

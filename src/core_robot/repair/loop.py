@@ -37,10 +37,12 @@ class GenerateFn(Protocol):
                  image_path: str | None = None) -> str | dict: ...
 
 
-def _normalize(generated) -> tuple[str, int, int]:
+def _normalize(generated) -> tuple[str, int, int, dict]:
+    """(code, tokens_in, tokens_out, extra fields such as request_key) from a generator's return."""
     if isinstance(generated, str):
-        return generated, 0, 0
-    return generated["code"], int(generated.get("tokens_in", 0)), int(generated.get("tokens_out", 0))
+        return generated, 0, 0, {}
+    extra = {k: generated[k] for k in ("request_key", "status", "incomplete_reason") if k in generated}
+    return generated["code"], int(generated.get("tokens_in", 0)), int(generated.get("tokens_out", 0)), extra
 
 
 def run_dir(task_id: str, condition: str, exec_seed: int) -> Path:
@@ -76,7 +78,7 @@ def run_with_repair(
     scene = read_only_scene(exec_initial_state(task, exec_seed))
     for attempt in range(1, MAX_ATTEMPTS[condition] + 1):
         try:
-            code, t_in, t_out = _normalize(
+            code, t_in, t_out, gen_info = _normalize(
                 generate_fn(task=task, plan=plan, attempt=attempt, scene=scene, feedback=feedback,
                             image_path=image_path)
             )
@@ -101,6 +103,7 @@ def run_with_repair(
             "code": code,
             "tokens_in": t_in,
             "tokens_out": t_out,
+            "generation": gen_info,
             "report": report,
             "outcome": {
                 "success": chk["success"], "ran_ok": result["ok"], "exception": result["exception"],

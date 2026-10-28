@@ -30,7 +30,11 @@ import httpx
 
 from core_robot.config import Settings, load_settings
 
-RETRYABLE_STATUS = {429, 500, 502, 503}  # 504 is not retried: docs say it recurs unchanged.
+RETRYABLE_STATUS = {429, 500, 502, 503}
+
+# Requests currently being sent, process-wide: (cache_dir, request key) -> Event set when done.
+_INFLIGHT: dict[tuple[str, str], threading.Event] = {}
+_INFLIGHT_LOCK = threading.Lock()  # 504 is not retried: docs say it recurs unchanged.
 
 
 class ApiError(Exception):
@@ -221,6 +225,7 @@ class MetaClient:
             body["reasoning"] = {"effort": reasoning_effort}
         resp = self._responses(body)
         out = {"text": output_text(resp), "raw": resp, "usage": usage_tokens(resp), "status": resp.get("status"),
+               "request_key": request_key(_logical(body)),
                "incomplete_reason": (resp.get("incomplete_details") or {}).get("reason")}
         if schema is not None:
             try:
@@ -277,29 +282,49 @@ class MetaClient:
         return self.transport
 
     def _call(self, model: str, logical: dict, build: Callable[[], tuple]) -> dict:
+        """Cache lookup, then (once per key) the network call.
+
+        Identical requests issued concurrently (e.g. attempt 1 of conditions A, B and C running
+        in parallel) are coalesced: the first caller sends the request, the others wait for it
+        and read the cached response, so they all get the same answer and only one is billed.
+        """
         key = request_key(logical)
         kind = _media_kind(logical)
         path = self.settings.cache_dir / f"{key}.json"
-        if path.exists():
-            resp = json.loads(path.read_text())["response"]
-            self._log(model, key, kind, cache_hit=True, latency_s=0.0, resp=resp)
-            return resp
-        if self.settings.replay:
-            self._log(model, key, kind, cache_hit=False, latency_s=0.0, resp=None, error="replay_miss")
-            raise ReplayMiss(f"request {key[:12]} for {model} not in cache (CORE_ROBOT_REPLAY=1)")
-        t0 = time.monotonic()
+        flight_key = (str(self.settings.cache_dir), key)
+        while True:
+            if path.exists():
+                resp = json.loads(path.read_text())["response"]
+                self._log(model, key, kind, cache_hit=True, latency_s=0.0, resp=resp)
+                return resp
+            if self.settings.replay:
+                self._log(model, key, kind, cache_hit=False, latency_s=0.0, resp=None, error="replay_miss")
+                raise ReplayMiss(f"request {key[:12]} for {model} not in cache (CORE_ROBOT_REPLAY=1)")
+            with _INFLIGHT_LOCK:
+                waiting_on = _INFLIGHT.get(flight_key)
+                if waiting_on is None:
+                    _INFLIGHT[flight_key] = threading.Event()
+            if waiting_on is None:
+                break  # this caller sends the request
+            waiting_on.wait()  # another caller is sending it; then re-check the cache
         try:
-            method, api_path, body = build()
-            resp = self._send_with_retries(lambda: self._transport()(method, api_path, body, None))
-        except Exception as e:
-            self._log(model, key, kind, cache_hit=False, latency_s=time.monotonic() - t0, resp=None, error=str(e)[:500])
-            raise
-        latency = time.monotonic() - t0
-        tmp = path.with_suffix(f".{threading.get_ident()}.tmp")
-        tmp.write_text(json.dumps({"request": logical, "response": resp}))
-        tmp.replace(path)
-        self._log(model, key, kind, cache_hit=False, latency_s=latency, resp=resp)
-        return resp
+            t0 = time.monotonic()
+            try:
+                method, api_path, body = build()
+                resp = self._send_with_retries(lambda: self._transport()(method, api_path, body, None))
+            except Exception as e:
+                self._log(model, key, kind, cache_hit=False, latency_s=time.monotonic() - t0, resp=None,
+                          error=str(e)[:500])
+                raise
+            latency = time.monotonic() - t0
+            tmp = path.with_suffix(f".{threading.get_ident()}.tmp")
+            tmp.write_text(json.dumps({"request": logical, "response": resp}))
+            tmp.replace(path)
+            self._log(model, key, kind, cache_hit=False, latency_s=latency, resp=resp)
+            return resp
+        finally:
+            with _INFLIGHT_LOCK:
+                _INFLIGHT.pop(flight_key).set()
 
     def _send_with_retries(self, send: Callable[[], dict]) -> dict:
         delay = 0.5
