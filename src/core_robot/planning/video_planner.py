@@ -17,6 +17,11 @@ from core_robot.perception.perceive import summary_text
 from core_robot.planning.schema import FREE_TABLE_SPACE, NOTE_MAX_LEN, RELATIONS, SIM_OBJECTS, Plan
 from core_robot.verify import relations
 
+# Generic: names no task and no object.
+NOTE_RULE = ("when the choice of which object to move depends on a spatial relationship to another object "
+             "rather than the object's color or name, add a note to that step describing the rule. "
+             "Otherwise omit the note.")
+
 PLANNER_SYSTEM = ("You watch a demonstration of a robot arm moving objects on a table and write down "
                   "the plan it demonstrates, as JSON matching the given schema.")
 
@@ -41,9 +46,7 @@ def planner_prompt(perception: dict) -> str:
         "- steps: one pick_and_place per object the robot moves, in the order shown. index starts at 0.",
         f'- destination: the object it was put in or on, or "{FREE_TABLE_SPACE}" when it was set on the '
         "bare table. Never coordinates.",
-        f"- note (optional, at most {NOTE_MAX_LEN} characters): only when which object was chosen depends on "
-        "a spatial relationship rather than its identity, describe the rule (for example, which object it was "
-        "nearest to). Otherwise omit it.",
+        f"- note (at most {NOTE_MAX_LEN} characters): {NOTE_RULE}",
         "- goal: the relations that hold at the end and capture what the demonstration was for. "
         f"Allowed relations: {', '.join(RELATIONS)}.",
         "", "## Relation definitions", relation_definitions(),

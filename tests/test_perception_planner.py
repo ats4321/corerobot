@@ -534,3 +534,22 @@ def test_extra_relation_on_a_matched_pair_is_an_extra_atom():
     more = Plan.model_validate({**d, "goal": d["goal"] + [{"subject": "red_block", "relation": "next_to",
                                                            "target": "green_block"}]})
     assert score(more, gt)["errors"] == ["extra goal atom"]
+
+
+def test_planner_prompt_names_no_task_and_no_ground_truth(world_run):
+    from core_robot.demos.tasks import TASKS
+    from core_robot.planning.video_planner import NOTE_RULE, planner_prompt
+    from core_robot.sim.env import OBJECTS
+
+    for demo, p in world_run["perceptions"].items():
+        prompt = planner_prompt(p)
+        assert NOTE_RULE in prompt
+        for t in TASKS:
+            for text in (t.id, t.title, t.instruction, t.id.split("_", 1)[1].replace("_", " ")):
+                assert text not in prompt, f"task text {text!r} in planner prompt for {demo}"
+        gt = gt_plan(demo)
+        for text in [render_plan(gt)] + [f"{g.subject} {g.relation} {g.target}" for g in gt.goal] + \
+                [f"{s.object} -> {s.destination}" for s in gt.steps] + [s.note for s in gt.steps if s.note]:
+            assert text not in prompt
+    for o in OBJECTS:  # the rule itself is generic
+        assert o.name not in NOTE_RULE and o.name.replace("_", " ") not in NOTE_RULE

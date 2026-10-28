@@ -49,11 +49,14 @@ def load_ground_truth_plan(demo_id: str) -> Plan:
 
 
 def evaluate_planner(client, ids: list[str], perception_root: Path = PERCEPTION_DIR,
-                     out_root: Path = PLANNER_DIR, reasoning_effort: str | None = None, merge: bool = True) -> dict:
+                     out_root: Path = PLANNER_DIR, reasoning_effort: str | None = None, merge: bool = True,
+                     over_budget=lambda: False) -> dict:
     """Plan each demo and score it. With merge, rows for other demos already in
     out_root/results.json are kept, so rerunning one demo does not drop the rest."""
     rows = []
     for demo_id in ids:
+        if over_budget():  # stop before starting another demo
+            break
         try:
             perception = perception_for(client, demo_id, perception_root)
             result = plan_from_video(client, perception["clip"]["path"], perception,

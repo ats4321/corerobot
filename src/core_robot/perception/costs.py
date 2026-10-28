@@ -80,3 +80,17 @@ def actual_spend(log_path: str | Path, since: float = 0.0) -> dict:
     out["usd"] = (muse_cost(out["tokens_in"], out["tokens_out"]) + out["sam_frames"] * SAM_PRICE_PER_FRAME
                   + out["sam_images"] * SAM_PRICE_PER_IMAGE)
     return out
+
+
+def measured_planner_tokens(log_path: str | Path) -> tuple[float, float, int] | None:
+    """Average (in, out) tokens of past live planner calls (Muse calls with a video)."""
+    p = Path(log_path)
+    if not p.exists():
+        return None
+    calls = [json.loads(line) for line in p.read_text().splitlines() if line.strip()]
+    calls = [c for c in calls if c.get("model", "").startswith("muse") and c.get("kind") == "video"
+             and not c.get("cache_hit") and c.get("usage")]
+    if not calls:
+        return None
+    return (sum(c["usage"]["input_tokens"] for c in calls) / len(calls),
+            sum(c["usage"]["output_tokens"] for c in calls) / len(calls), len(calls))

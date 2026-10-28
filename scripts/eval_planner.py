@@ -19,6 +19,24 @@ GATE = 6
 
 
 def print_estimate(ids):
+    from core_robot.eval.demo_eval import PERCEPTION_DIR
+    from core_robot.eval.run_eval import measured_codegen_tokens
+    from core_robot.perception.costs import measured_planner_tokens, muse_cost
+    from core_robot.planning.video_planner import FIRST_MAX_OUTPUT_TOKENS, RETRY_MAX_OUTPUT_TOKENS
+    from core_robot.config import load_settings
+
+    cached = [d for d in ids if (PERCEPTION_DIR / d / "perception.json").exists()]
+    if len(cached) == len(ids):
+        m = measured_planner_tokens(load_settings().log_path)
+        t_in, t_out = (m[0], m[1]) if m else (20000, 3000)
+        per = muse_cost(t_in, t_out)
+        worst = muse_cost(t_in, FIRST_MAX_OUTPUT_TOKENS) + muse_cost(t_in, RETRY_MAX_OUTPUT_TOKENS)
+        print(f"perception: cached for all {len(ids)} demos ($0)")
+        print(f"planner: {len(ids)} calls x ${per:.4f} (measured avg {t_in:.0f} in + {t_out:.0f} out tokens"
+              f"{'' if m else ', assumed'}) = ${len(ids) * per:.2f} expected")
+        print(f"planner worst case (every call truncated at {FIRST_MAX_OUTPUT_TOKENS}, retried at "
+              f"{RETRY_MAX_OUTPUT_TOKENS}): {len(ids)} x ${worst:.4f} = ${len(ids) * worst:.2f}")
+        return
     e = estimate_perception_planning([demo_meta(d) for d in ids])
     print(f"perception + planner estimate for {e['demos']} demos:")
     print(f"  SAM video: {e['sam_video_frames_billed']} frames x $0.0002 = ${e['sam_video_usd']:.2f}")
@@ -36,6 +54,8 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--reasoning-effort", default=None, help="experiment only: reasoning.effort for planner calls")
     ap.add_argument("--label", default=None, help="write results to data/runs/planner/experiments/<label>/")
+    ap.add_argument("--budget", type=float, default=None,
+                    help="USD: start no new demo once actual spend since this command started exceeds it")
     args = ap.parse_args()
     ids = args.demos.split(",") if args.demos else demo_ids()
     if args.dry_run:
@@ -53,7 +73,18 @@ def main() -> int:
     if args.reasoning_effort and not args.label:
         print("--reasoning-effort is an experiment: give it a --label so it does not overwrite the main results")
         return 2
-    s = evaluate_planner(MetaClient(settings=settings), ids, out_root=out, reasoning_effort=args.reasoning_effort)
+    import time
+
+    over_budget = lambda: False
+    if args.budget is not None:
+        from core_robot.perception.costs import actual_spend
+
+        started = time.time()
+        over_budget = lambda: actual_spend(settings.log_path, started)["usd"] > args.budget
+    s = evaluate_planner(MetaClient(settings=settings), ids, out_root=out, reasoning_effort=args.reasoning_effort,
+                         over_budget=over_budget)
+    if len(s["rows"]) and over_budget():
+        print(f"BUDGET: spend passed ${args.budget:.2f}; demos after that were not started")
     print(f"results: {out / 'results.json'}" + (f"  [EXPERIMENT {args.label}: reasoning_effort={args.reasoning_effort}]"
                                                   if args.label else ""))
     print(f"{'demo':32s} {'strict':6s} {'lenient':7s} errors")
