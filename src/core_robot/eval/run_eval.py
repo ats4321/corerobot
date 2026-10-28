@@ -133,7 +133,7 @@ def plan_for(task, seed: int, plan_source: str, planner_results: Path | None = N
 
 
 def run_one(spec: RunSpec, generator, root: Path, plan_source: str, record: bool, timeout_s: float,
-            over_budget=lambda: False) -> str:
+            over_budget=lambda: False, offset_cm: float | None = None) -> str:
     """Execute one run unless it is already finished. Returns "done", "skipped" or "over_budget"."""
     if is_finished(root, spec):
         return "skipped"
@@ -143,7 +143,9 @@ def run_one(spec: RunSpec, generator, root: Path, plan_source: str, record: bool
     out = run_path(root, spec)
     t0 = time.monotonic()
     meta = {"plan_source": plan_source, "run_source": generator.run_source, "generator": generator.name,
-            "environment": "clean"}
+            "environment": "perturbed" if offset_cm else "clean"}
+    if offset_cm:
+        meta["calibration_offset_cm"] = offset_cm
     if plan_source == "predicted":
         try:
             _, prow = predicted_plan_row(task)
@@ -161,7 +163,7 @@ def run_one(spec: RunSpec, generator, root: Path, plan_source: str, record: bool
         (out / "run.json").write_text(json.dumps(log, indent=2))
         return "done"
     log = run_with_repair(task, plan, spec.seed, spec.condition, generator,
-                          out_dir=out, timeout_s=timeout_s, record=record, meta=meta)
+                          out_dir=out, timeout_s=timeout_s, record=record, meta=meta, calibration_offset_cm=offset_cm)
     log["wall_clock_s"] = round(time.monotonic() - t0, 2)
     tmp = out / "run.json.tmp"
     tmp.write_text(json.dumps(log, indent=2, default=str))
@@ -170,13 +172,13 @@ def run_one(spec: RunSpec, generator, root: Path, plan_source: str, record: bool
 
 
 def run_matrix(runs, generator, root: Path, plan_source="ground_truth", workers=4, record=True,
-               timeout_s=60.0, over_budget=lambda: False) -> Counter:
+               timeout_s=60.0, over_budget=lambda: False, offset_cm: float | None = None) -> Counter:
     """Run (or resume) the given runs. over_budget() is checked before each run starts; once
     it returns True no new runs start (runs already started finish)."""
     root.mkdir(parents=True, exist_ok=True)
     with ThreadPoolExecutor(max_workers=workers) as pool:
         outcomes = list(pool.map(
-            lambda s: run_one(s, generator, root, plan_source, record, timeout_s, over_budget), runs))
+            lambda s: run_one(s, generator, root, plan_source, record, timeout_s, over_budget, offset_cm), runs))
     write_results_csv(root)
     return Counter(outcomes)
 
@@ -312,6 +314,29 @@ def make_generator(name: str, settings):
     raise SystemExit(f"unknown --generator {name!r}")
 
 
+def resolve_offset(environment: str, offset_cm: float | None, seeds: set[int]) -> float | None:
+    """The calibration_offset magnitude for this run, enforcing the pilot/evaluation split."""
+    from core_robot.config import CALIBRATION_OFFSET_CM
+
+    if environment == "clean":
+        if offset_cm is not None:
+            raise SystemExit("--offset-cm only applies to --environment perturbed")
+        return None
+    eval_seeds = seeds & set(exec_seeds(50))
+    if eval_seeds:
+        if CALIBRATION_OFFSET_CM is None:
+            raise SystemExit(f"perturbed runs on evaluation seeds {sorted(eval_seeds)} need a frozen "
+                             "CALIBRATION_OFFSET_CM (run the pilot first)")
+        if offset_cm is not None and offset_cm != CALIBRATION_OFFSET_CM:
+            raise SystemExit(f"evaluation seeds use the frozen offset {CALIBRATION_OFFSET_CM} cm, not {offset_cm}")
+        return CALIBRATION_OFFSET_CM
+    if offset_cm is None:
+        if CALIBRATION_OFFSET_CM is None:
+            raise SystemExit("--environment perturbed needs --offset-cm (pilot) or a frozen CALIBRATION_OFFSET_CM")
+        return CALIBRATION_OFFSET_CM
+    return offset_cm
+
+
 def resolve_tasks(spec: str | None) -> list[str] | None:
     """"t4,t7" or full ids -> task ids. None means all tasks."""
     if not spec:
@@ -338,6 +363,10 @@ def main(argv=None) -> int:
     ap.add_argument("--run-name", default=None, help="subdirectory name (default: <generator>_<plan_source>)")
     ap.add_argument("--no-video", action="store_true")
     ap.add_argument("--timeout", type=float, default=60.0)
+    ap.add_argument("--environment", default="clean", choices=["clean", "perturbed"])
+    ap.add_argument("--offset-cm", type=float, default=None,
+                    help="perturbed only: calibration_offset magnitude; only for pilot seeds (evaluation seeds use "
+                         "the frozen CALIBRATION_OFFSET_CM)")
     ap.add_argument("--budget", type=float, default=None,
                     help="USD: stop starting new runs once actual API spend since this command started exceeds it")
     args = ap.parse_args(argv)
@@ -350,6 +379,7 @@ def main(argv=None) -> int:
     if not set(conditions) <= set(CONDITIONS):
         raise SystemExit(f"--conditions must be a subset of {CONDITIONS}")
     runs = planned_runs(resolve_tasks(args.tasks), seeds, conditions, limit=args.limit)
+    offset_cm = resolve_offset(args.environment, args.offset_cm, {r.seed for r in runs})
     todo = [r for r in runs if not is_finished(root, r)]
 
     if args.dry_run:
@@ -395,7 +425,7 @@ def main(argv=None) -> int:
 
         over_budget = lambda: actual_spend(settings.log_path, started)["usd"] > args.budget
     counts = run_matrix(todo, generator, root, args.plan_source, args.workers, not args.no_video, args.timeout,
-                        over_budget)
+                        over_budget, offset_cm)
     if counts.get("over_budget"):
         print(f"BUDGET: {counts['over_budget']} runs not started (spend passed ${args.budget:.2f})")
     from core_robot.eval.report import write_report

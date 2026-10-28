@@ -87,6 +87,7 @@ def run_code(
     out_dir: str | Path,
     timeout_s: float = DEFAULT_TIMEOUT_S,
     record: bool = True,
+    calibration_offset_cm: float | None = None,
 ) -> dict:
     """Validate and execute `code` against a fresh scene for (task_id, exec_seed).
 
@@ -107,7 +108,8 @@ def run_code(
         return {**base, "rejected": True, "exception": "rejected before running: " + "; ".join(problems)}
 
     (out / "code.py").write_text(code)
-    job = {"code": code, "task_id": task_id, "exec_seed": exec_seed, "out_dir": str(out), "record": record}
+    job = {"code": code, "task_id": task_id, "exec_seed": exec_seed, "out_dir": str(out), "record": record,
+           "calibration_offset_cm": calibration_offset_cm}
     (out / "job.json").write_text(json.dumps(job))
     for stale in ("result.json", "calls.jsonl"):
         (out / stale).unlink(missing_ok=True)

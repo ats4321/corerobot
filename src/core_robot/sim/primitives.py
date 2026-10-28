@@ -61,8 +61,11 @@ class Robot:
     appends an entry to self.call_log.
     """
 
-    def __init__(self, env: TabletopEnv):
+    def __init__(self, env: TabletopEnv, calibration_offset: tuple[float, float] | None = None):
         self.env = env
+        # Hidden release offset (meters) for the opt-in calibration_offset perturbation.
+        self._offset = calibration_offset or (0.0, 0.0)
+        self._true: dict | None = None  # true outcome of the last place, for logs only
         self.held: str | None = None
         self._grasp_cid: int | None = None
         self.call_log: list[dict] = []
@@ -146,11 +149,15 @@ class Robot:
     # ---- implementation ----
 
     def _logged(self, name: str, args: dict, fn) -> dict:
+        self._true = None
         try:
             result = fn()
         except Exception as e:  # programming errors still surface as a failed call, never a crash
             result = _fail(f"internal error: {type(e).__name__}: {e}")
-        self.call_log.append({"primitive": name, "args": args, **result, "sim_time": round(self.env.sim_time, 3)})
+        entry = {"primitive": name, "args": args, **result, "sim_time": round(self.env.sim_time, 3)}
+        if self._true is not None:  # logs keep the true outcome; the caller only sees `result`
+            entry["true"] = self._true
+        self.call_log.append(entry)
         return result
 
     def _resolve(self, target: Target):
@@ -231,20 +238,28 @@ class Robot:
         surface = (self.env.scene_state()[name]["position"][2] + BIN_FLOOR_T) if kind == "bin" else top
         release_z = surface + below_ee + 0.015
         orn = self._ee_orn()
-        carry = [x, y, max(top + HOVER_CLEARANCE, CARRY_Z)]
+        dx, dy = self._offset
+        rx, ry = x + dx, y + dy  # where the arm really goes (equal to x, y unless perturbed)
+        carry = [rx, ry, max(top + HOVER_CLEARANCE, CARRY_Z)]
         reached, ee = self._move_to([ee[0], ee[1], max(ee[2], CARRY_Z)], orn)
         reached, ee = self._move_to(carry, orn)
         if not reached:
-            return _fail("unreachable", requested=_r(carry), gripper_position=_r(ee))
-        self._move_to([x, y, release_z], orn, speed=0.25)
+            return _fail("unreachable", requested=_r([x, y, carry[2]]), gripper_position=_r(ee - [dx, dy, 0]))
+        self._move_to([rx, ry, release_z], orn, speed=0.25)
         self._detach()
         self._set_fingers(0.04)
         self.env.step(int(0.3 * SIM_HZ))
-        self._move_to([x, y, max(release_z + 0.1, top + HOVER_CLEARANCE)], orn)
+        self._move_to([rx, ry, max(release_z + 0.1, top + HOVER_CLEARANCE)], orn)
         self._go_home()
         self.env.step(int(0.3 * SIM_HZ))
-        final = self.env.scene_state()[obj]["position"]
-        on = self._on_target(obj, final, x, y, name, kind)
+        true_final = self.env.scene_state()[obj]["position"]
+        final = true_final
+        if (dx, dy) != (0.0, 0.0):
+            # Perturbed: the robot believes the object rests exactly at the commanded point.
+            # The true outcome goes to the logs only.
+            final = [x, y, surface + (hi[2] - lo[2]) / 2]
+            self._true = {"object_position": _r(true_final), "release_xy": _r([rx, ry])}
+        on = bool(self._on_target(obj, final, x, y, name, kind))
         details = dict(object_position=_r(final), on_target=on, target_xy=_r([x, y]))
         if not on:
             return _fail("object settled off target", **details)

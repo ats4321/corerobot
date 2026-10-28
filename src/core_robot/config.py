@@ -40,6 +40,14 @@ SAM_MIN_FRAMES = 50
 EXEC_SEED_BASE = 100
 
 
+# Pilot seeds for choosing the perturbation magnitude; never used for evaluation.
+PILOT_SEEDS = [200, 201, 202, 203, 204]
+
+# calibration_offset perturbation magnitude (cm), frozen after the pilot (docs/perturbation_pilot.md).
+# None = not frozen yet: perturbed runs on evaluation seeds are refused.
+CALIBRATION_OFFSET_CM: float | None = 4.0
+
+
 def exec_seeds(n: int = 5) -> list[int]:
     """Seeds for evaluation layouts: EXEC_SEED_BASE .. EXEC_SEED_BASE + n - 1."""
     return list(range(EXEC_SEED_BASE, EXEC_SEED_BASE + n))

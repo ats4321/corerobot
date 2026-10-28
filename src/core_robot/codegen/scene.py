@@ -7,14 +7,20 @@ import copy
 SCENE_FIELDS = ("position", "orientation", "color", "kind")
 
 
-def build_exec_scene(task, exec_seed: int):
-    """Reset a fresh env to (task, exec_seed), home the robot, settle. Returns (env, robot, state)."""
+def build_exec_scene(task, exec_seed: int, calibration_offset_cm: float | None = None):
+    """Reset a fresh env to (task, exec_seed), home the robot, settle. Returns (env, robot, state).
+
+    calibration_offset_cm: opt-in perturbation (sim/perturbation.py); None or 0 means clean.
+    The starting state does not depend on it.
+    """
     from core_robot.sim.env import SIM_HZ, TabletopEnv
+    from core_robot.sim.perturbation import calibration_offset
     from core_robot.sim.primitives import Robot
 
     env = TabletopEnv()
     task.scene_builder(env, exec_seed)
-    robot = Robot(env)
+    offset = calibration_offset(exec_seed, calibration_offset_cm) if calibration_offset_cm else None
+    robot = Robot(env, calibration_offset=offset)
     env.step(int(0.2 * SIM_HZ))
     return env, robot, env.scene_state()
 

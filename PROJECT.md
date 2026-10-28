@@ -20,6 +20,11 @@ Show that Meta's models can reason about physical tasks, measured as task succes
 - All randomness is seeded.
 - Generated code runs only in a sandboxed subprocess with a timeout.
 
+## Environments
+
+- clean: the simulator as is.
+- perturbed: opt-in "calibration_offset". Every place releases the object at a constant offset (4 cm, frozen after a pilot on seeds 200-204; direction seeded by the exec seed). The robot is not told: place reports success at the commanded point; the checker uses the true state. Never mentioned in code-generation prompts. See docs/perturbation_pilot.md.
+
 ## Models
 
 Via Meta Model API (OpenAI-compatible, base URL https://api.meta.ai/v1, key in env var MODEL_API_KEY):

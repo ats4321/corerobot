@@ -51,7 +51,8 @@ def make_robot_api(robot: Robot, calls_path: Path):
 def main(job_path: str) -> None:
     job = json.loads(Path(job_path).read_text())
     out = Path(job["out_dir"])
-    env, robot, initial = build_exec_scene(TASKS_BY_ID[job["task_id"]], job["exec_seed"])
+    env, robot, initial = build_exec_scene(TASKS_BY_ID[job["task_id"]], job["exec_seed"],
+                                           job.get("calibration_offset_cm"))
 
     safe = {name: getattr(builtins, name) for name in SAFE_BUILTINS}
     namespace = {"__builtins__": safe, "__name__": "generated"}

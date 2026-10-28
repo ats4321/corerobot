@@ -50,6 +50,20 @@ def goal_error_cm(atom: GoalAtom, final: dict, initial: dict) -> float:
     return round(err * 100, 1)
 
 
+def goal_error_vector_cm(atom: GoalAtom, final: dict, initial: dict) -> list[float] | None:
+    """(dx, dy) in cm from where the subject should be to where it is, for relations with a
+    single ideal spot: in (bin center), on (target center), swapped_with (target's start).
+    None for left_of / right_of / next_to."""
+    s = final[atom.subject]["position"]
+    if atom.relation in ("in", "on"):
+        ideal = final[atom.target]["position"]
+    elif atom.relation == "swapped_with":
+        ideal = initial[atom.target]["position"]
+    else:
+        return None
+    return [round((s[0] - ideal[0]) * 100, 1), round((s[1] - ideal[1]) * 100, 1)]
+
+
 def check(task, scene_state: dict | None, initial_state: dict | None, plan: Plan) -> dict:
     """Returns {task_id, success, per_goal: [...], unnamed_ok, unmoved: [...]}.
 
@@ -71,7 +85,8 @@ def check(task, scene_state: dict | None, initial_state: dict | None, plan: Plan
         ok, detail = holds(atom, scene_state, initial_state)
         per_goal.append({
             "relation": atom.relation, "subject": atom.subject, "target": atom.target, "ok": ok,
-            "error_cm": goal_error_cm(atom, scene_state, initial_state), "detail": detail,
+            "error_cm": goal_error_cm(atom, scene_state, initial_state),
+            "error_vec_cm": goal_error_vector_cm(atom, scene_state, initial_state), "detail": detail,
         })
     unmoved = [
         {"block": name, "ok": ok, "moved_cm": round(_xy(scene_state[name]["position"],

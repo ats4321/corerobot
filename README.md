@@ -70,6 +70,18 @@ scripts/run_live_gates.sh          # prints the cost estimate, asks, then runs:
 Individual steps: `scripts/eval_planner.py [--dry-run]`, `scripts/sam_gate.py`, and
 `python -m core_robot.eval.run_eval --generator muse --tasks t4,t7 --seeds 100 [--dry-run]`.
 
+## Perturbed environment
+
+`--environment perturbed` turns on the opt-in `calibration_offset` perturbation: every `place`
+releases the object at a constant offset of `CALIBRATION_OFFSET_CM` (4 cm, frozen after the
+pilot in [docs/perturbation_pilot.md](docs/perturbation_pilot.md)) in a direction seeded by the
+execution seed. `place` still returns `ok=True` and reports the commanded point; the checker,
+failure report (which adds the error direction dx, dy per failed goal), logs and videos use the
+true state. The perturbation is never mentioned to the code generator, so attempt 1 is the same
+request (and cached response) as in the clean environment. `results.csv` has an `environment`
+column and `results.md` shows each environment in its own table. Pilot seeds 200-204 are never
+used for evaluation.
+
 ## Results
 
 No live results yet. This section is generated only from live runs (`run_source=live`) by `core_robot.eval.report.build_readme_results`, which refuses fake-generator output.

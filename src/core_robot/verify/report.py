@@ -67,6 +67,10 @@ def build_failure_report(result: dict, check: dict) -> str:
                 where = (f" ({g['subject']} at {_fmt(final[g['subject']]['position'])}, "
                          f"{g['target']} at {_fmt(final[g['target']]['position'])})")
             dist = f"{g['error_cm']} cm from goal" if g["error_cm"] is not None else "not evaluated"
+            vec = g.get("error_vec_cm")
+            if vec is not None:
+                dist += (f", off by dx {vec[0]:+.1f} cm, dy {vec[1]:+.1f} cm "
+                         "(world frame: +x away from the robot, +y to its left)")
             lines.append(f"  - {g['subject']} {g['relation']} {g['target']}: {dist}{where}; {g['detail']}")
     if disturbed:
         lines.append("Blocks that no step moves but that moved (must stay within 2 cm):")

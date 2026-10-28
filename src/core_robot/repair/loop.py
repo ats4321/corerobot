@@ -59,6 +59,7 @@ def run_with_repair(
     timeout_s: float = DEFAULT_TIMEOUT_S,
     record: bool = True,
     meta: dict | None = None,
+    calibration_offset_cm: float | None = None,
 ) -> dict:
     """Run one (task, exec_seed, condition). Stops at the first success. Returns the run log.
 
@@ -92,7 +93,8 @@ def run_with_repair(
             break
         log["tokens_in"] += t_in
         log["tokens_out"] += t_out
-        result = run_code(code, task.id, exec_seed, out / f"attempt_{attempt}", timeout_s=timeout_s, record=record)
+        result = run_code(code, task.id, exec_seed, out / f"attempt_{attempt}", timeout_s=timeout_s, record=record,
+                          calibration_offset_cm=calibration_offset_cm)
         gt_plan = task.ground_truth_plan(result["initial_state"]) if result["initial_state"] else plan
         chk = checker.check(task, result["final_state"], result["initial_state"], gt_plan)
         report = build_failure_report(result, chk)
