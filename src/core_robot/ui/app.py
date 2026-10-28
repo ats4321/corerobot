@@ -2,10 +2,11 @@
 
     python -m core_robot.ui.app
 
-Reads precomputed artifacts only: demos from data/demos/ and evaluation run logs from
-data/runs/eval/ (live) or data/runs/fake/ (fake generator, clearly labelled). Nothing here
-calls the Meta API unless "Replay from cache" is switched off, which runs live code
-generation (run_live). Perception and planning are still stubs, marked "STUB: live API".
+Browses demos from data/demos/ and evaluation run logs from data/runs/eval/ (live) or
+data/runs/fake/ (fake generator, clearly labelled). The "Run on your own video" section runs the
+real-clip pipeline (core_robot.real.pipeline) on an upload, stage by stage. Nothing calls the
+Meta API unless "Replay from cache" is switched off; the live video pipeline also requires the
+confirmation box and is capped by the budget guard.
 """
 
 from __future__ import annotations
@@ -19,24 +20,6 @@ from core_robot.eval.report import FAKE_BANNER
 
 MAX_ATTEMPTS_SHOWN = 3
 
-
-# ---------------------------------------------------------------- STUB: live API
-# Live perception and planning stages, not wired into the page yet. Live code generation
-# is wired: switching "Replay from cache" off runs run_live() below.
-
-def perceive_demo(video_path: str):
-    """STUB: live API. Implemented in core_robot.perception.perceive (run via scripts/eval_planner.py);
-    not yet shown on this page."""
-    raise NotImplementedError("perception is not on the page yet; run scripts/eval_planner.py")
-
-
-def plan_from_demo(video_path: str, masks):
-    """STUB: live API. Implemented in core_robot.planning.video_planner (run via scripts/eval_planner.py);
-    not yet shown on this page."""
-    raise NotImplementedError("video-to-plan is not on the page yet; run scripts/eval_planner.py")
-
-
-# ---------------------------------------------------------------- end STUB
 
 LIVE_UI_RUN_SET = "runs/eval/ui"
 
@@ -211,7 +194,80 @@ def build_app():
         load_btn.click(show_run, run_inputs, [run_status] + attempt_outputs)
         app.load(show_demo, demo_dd, [demo_video, plan_json, demo_status])
         app.load(show_run, run_inputs, [run_status] + attempt_outputs)
+        _live_section(gr, replay)
     return app
+
+
+def live_view(events):
+    """Turn pipeline events into the live section's component values (one tuple per event)."""
+    state = {"status": [], "normalized": None, "overlay": None, "plan": None,
+             "attempts": [("", None, "") for _ in range(MAX_ATTEMPTS_SHOWN)], "outcome": ""}
+    for name, p in events:
+        if name == "error":
+            state["status"].append(_err(p["message"]))
+        elif name == "normalized":
+            state["normalized"] = p["path"]
+            state["status"].append(f"Normalized: {p['size'][0]}x{p['size'][1]}, {p['duration_s']} s")
+        elif name == "perception":
+            state["overlay"] = p["overlay"]
+            state["status"].append(f"Perception: named {', '.join(p['named']) or 'nothing'}; "
+                                   f"phrases {p['phrases']}; coverage {p['coverage']}")
+        elif name == "plan":
+            state["plan"] = p["plan"]
+            state["status"].append("Plan ready" if p["plan"] else _err(f"No valid plan: {p['error']}"))
+        elif name == "attempt":
+            k = p["attempt"] - 1
+            ok = (p.get("outcome") or {}).get("success")
+            if k < MAX_ATTEMPTS_SHOWN:
+                state["attempts"][k] = (p.get("code") or "", p.get("video"),
+                                        ("success" if ok else (p.get("report") or "")))
+            state["status"].append(f"Attempt {p['attempt']}: {'success' if ok else 'failed'}")
+        elif name == "outcome":
+            head = "**SUCCESS**" if p.get("success") else "**FAILED**"
+            body = p.get("judged_against") or p.get("reason") or ""
+            goals = "\n".join(f"- {g}" for g in p.get("goal", []))
+            state["outcome"] = f"{head}: {body}\n\n{goals}".strip()
+        elif name == "spend":
+            state["status"].append(f"Spend: ${p['spent']:.3f} of ${p['budget']:.2f}")
+        flat = [v for a in state["attempts"] for v in a]
+        yield ("\n\n".join(state["status"]), state["normalized"], state["overlay"], state["plan"], *flat,
+               state["outcome"])
+
+
+def _live_section(gr, replay):
+    from core_robot.ui.live import DEFAULT_BUDGET, estimate_text, events
+
+    gr.Markdown("## Run on your own video\nWith **Replay from cache** off this calls the Meta API (perception, "
+                "planning, code generation) and costs money; with it on, only cached responses are used. Prompts "
+                "are the frozen simulator prompts. Success is judged against the plan's own goal, not against "
+                "what the person in the clip did.")
+    with gr.Row():
+        upload = gr.Video(label="Your demonstration video", sources=["upload"])
+        with gr.Column():
+            estimate = gr.Markdown("Upload a video to see the cost estimate.")
+            budget = gr.Number(value=DEFAULT_BUDGET, label="Budget, USD (hard cap)", precision=2)
+            confirm = gr.Checkbox(value=False, label="I confirm live API spend up to the budget above")
+            go = gr.Button("Run pipeline", variant="primary")
+    status = gr.Markdown()
+    with gr.Row():
+        norm_video = gr.Video(label="Normalized clip", interactive=False)
+        overlay = gr.Video(label="SAM 3.1 overlay", interactive=False)
+        plan = gr.JSON(label="Plan")
+    attempt_parts = []
+    for i in range(MAX_ATTEMPTS_SHOWN):
+        with gr.Row():
+            code = gr.Code(label=f"Attempt {i + 1}: generated code", language="python", interactive=False)
+            vid = gr.Video(label=f"Attempt {i + 1}: simulator video", interactive=False)
+            rep = gr.Textbox(label=f"Attempt {i + 1}: outcome / failure report", lines=6, interactive=False)
+        attempt_parts += [code, vid, rep]
+    outcome = gr.Markdown()
+
+    upload.change(estimate_text, upload, estimate)
+
+    def run(video, replay_on, confirmed, budget_usd):
+        yield from live_view(events(video, bool(replay_on), bool(confirmed), float(budget_usd or DEFAULT_BUDGET)))
+
+    go.click(run, [upload, replay, confirm, budget], [status, norm_video, overlay, plan] + attempt_parts + [outcome])
 
 
 def _goal_text(g: dict) -> str:

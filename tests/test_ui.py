@@ -84,11 +84,5 @@ def test_corrupt_log_is_an_error(run_set):
     assert "Could not read" in app.load_run(rs, "t1_red_in_red_bin", "B", 100)["error"]
 
 
-def test_stubs_are_marked_not_implemented():
-    for fn, args in ((app.perceive_demo, ("v.mp4",)), (app.plan_from_demo, ("v.mp4", None))):
-        with pytest.raises(NotImplementedError):
-            fn(*args)
-
-
 def test_app_builds():
     assert app.build_app() is not None

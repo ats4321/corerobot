@@ -70,6 +70,21 @@ scripts/run_live_gates.sh          # prints the cost estimate, asks, then runs:
 Individual steps: `scripts/eval_planner.py [--dry-run]`, `scripts/sam_gate.py`, and
 `python -m core_robot.eval.run_eval --generator muse --tasks t4,t7 --seeds 100 [--dry-run]`.
 
+## Real clips
+
+```bash
+.venv/bin/python scripts/run_real_demo.py data/real/<clip>.mp4 --dry-run        # cost estimate only
+.venv/bin/python scripts/run_real_demo.py data/real/<clip>.mp4 --budget 0.5     # live; hard cap
+```
+
+Normalizes the clip (upright, at most 20 s, longest side 960 px, H.264 under 20 MB), runs SAM
+perception and the planner with the frozen prompts, builds a simulator scene with exactly the
+plan's objects (seed 300), and runs condition C repair. Success is judged against the plan's own
+goal atoms: it checks that the robot did what the plan says, not that the plan matches what the
+person did. Outputs: `data/runs/real/<clip>/`. The UI's "Run on your own video" section runs the
+same pipeline (live only with "Replay from cache" off and the confirmation box ticked).
+Clips in `data/real/` are gitignored.
+
 ## Perturbed environment
 
 `--environment perturbed` turns on the opt-in `calibration_offset` perturbation: every `place`
