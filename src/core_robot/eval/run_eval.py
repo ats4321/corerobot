@@ -26,6 +26,7 @@ from core_robot.config import (
 )
 from core_robot.demos.tasks import TASKS, TASKS_BY_ID
 from core_robot.repair.loop import MAX_ATTEMPTS, run_with_repair
+from core_robot.planning.schema import Plan
 from core_robot.sim.env import TabletopEnv
 
 CONDITIONS = ("A", "B", "C")
@@ -92,9 +93,33 @@ def is_finished(root: Path, spec: RunSpec) -> bool:
     return bool(log.get("finished")) and failure_category(log) != "harness error"
 
 
-def plan_for(task, seed: int, plan_source: str):
-    if plan_source != "ground_truth":
-        raise NotImplementedError(f"plan_source={plan_source!r} is not implemented yet")
+class NoPredictedPlan(RuntimeError):
+    """The planner produced no valid plan for this task's demo (never replaced by ground truth)."""
+
+
+PREDICTED_PLAN_DEMO_SEED = 0
+
+
+def predicted_plan(task, planner_results: Path | None = None) -> Plan:
+    """The cached predicted plan from the task's seed-0 demo (scripts/eval_planner.py)."""
+    from core_robot.eval.demo_eval import PLANNER_DIR
+
+    path = planner_results or PLANNER_DIR / "results.json"
+    demo = f"{task.id}/seed_{PREDICTED_PLAN_DEMO_SEED}"
+    if not path.exists():
+        raise NoPredictedPlan(f"no planner results at {path}; run scripts/eval_planner.py")
+    rows = {r["demo"]: r for r in json.loads(path.read_text())["rows"]}
+    row = rows.get(demo)
+    if row is None:
+        raise NoPredictedPlan(f"no planner result for demo {demo}")
+    if not row.get("plan"):
+        raise NoPredictedPlan(f"the planner produced no valid plan for demo {demo}: {row.get('planner_error')}")
+    return Plan.model_validate(row["plan"])
+
+
+def plan_for(task, seed: int, plan_source: str, planner_results: Path | None = None) -> Plan:
+    if plan_source == "predicted":
+        return predicted_plan(task, planner_results)
     env = TabletopEnv()
     try:
         return task.ground_truth_plan(task.scene_builder(env, seed))
@@ -102,15 +127,27 @@ def plan_for(task, seed: int, plan_source: str):
         env.close()
 
 
-def run_one(spec: RunSpec, generator, root: Path, plan_source: str, record: bool, timeout_s: float) -> str:
-    """Execute one run unless it is already finished. Returns "done" or "skipped"."""
+def run_one(spec: RunSpec, generator, root: Path, plan_source: str, record: bool, timeout_s: float,
+            over_budget=lambda: False) -> str:
+    """Execute one run unless it is already finished. Returns "done", "skipped" or "over_budget"."""
     if is_finished(root, spec):
         return "skipped"
+    if over_budget():
+        return "over_budget"
     task = TASKS_BY_ID[spec.task_id]
     out = run_path(root, spec)
     t0 = time.monotonic()
     meta = {"plan_source": plan_source, "run_source": generator.run_source, "generator": generator.name}
-    log = run_with_repair(task, plan_for(task, spec.seed, plan_source), spec.seed, spec.condition, generator,
+    try:
+        plan = plan_for(task, spec.seed, plan_source)
+    except NoPredictedPlan as e:
+        out.mkdir(parents=True, exist_ok=True)
+        log = {"task_id": task.id, "condition": spec.condition, "exec_seed": spec.seed, "plan": None,
+               "success": False, "attempts_used": 0, "attempts": [], "tokens_in": 0, "tokens_out": 0,
+               "finished": True, "plan_error": str(e), **meta, "wall_clock_s": 0.0}
+        (out / "run.json").write_text(json.dumps(log, indent=2))
+        return "done"
+    log = run_with_repair(task, plan, spec.seed, spec.condition, generator,
                           out_dir=out, timeout_s=timeout_s, record=record, meta=meta)
     log["wall_clock_s"] = round(time.monotonic() - t0, 2)
     tmp = out / "run.json.tmp"
@@ -120,12 +157,28 @@ def run_one(spec: RunSpec, generator, root: Path, plan_source: str, record: bool
 
 
 def run_matrix(runs, generator, root: Path, plan_source="ground_truth", workers=4, record=True,
-               timeout_s=60.0) -> Counter:
+               timeout_s=60.0, over_budget=lambda: False) -> Counter:
+    """Run (or resume) the given runs. over_budget() is checked before each run starts; once
+    it returns True no new runs start (runs already started finish)."""
     root.mkdir(parents=True, exist_ok=True)
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        outcomes = list(pool.map(lambda s: run_one(s, generator, root, plan_source, record, timeout_s), runs))
+        outcomes = list(pool.map(
+            lambda s: run_one(s, generator, root, plan_source, record, timeout_s, over_budget), runs))
     write_results_csv(root)
     return Counter(outcomes)
+
+
+def measured_codegen_tokens(log_path: Path) -> tuple[float, float, int] | None:
+    """Average (in, out) tokens of past live code-generation calls (text-only Muse calls)."""
+    if not Path(log_path).exists():
+        return None
+    calls = [json.loads(l) for l in Path(log_path).read_text().splitlines() if l.strip()]
+    calls = [c for c in calls if c.get("model", "").startswith("muse") and c.get("kind") == "text"
+             and not c.get("cache_hit") and c.get("usage")]
+    if not calls:
+        return None
+    return (sum(c["usage"].get("input_tokens", 0) for c in calls) / len(calls),
+            sum(c["usage"].get("output_tokens", 0) for c in calls) / len(calls), len(calls))
 
 
 # ---- labelling ----
@@ -145,7 +198,7 @@ def failure_category(log: dict) -> str:
     """
     if log.get("success"):
         return ""
-    if not log.get("attempts"):
+    if not log.get("attempts"):  # includes "no valid predicted plan" (log["plan_error"])
         return "harness error"
     last = log["attempts"][-1]
     out = last.get("outcome", {})
@@ -250,6 +303,8 @@ def main(argv=None) -> int:
     ap.add_argument("--run-name", default=None, help="subdirectory name (default: <generator>_<plan_source>)")
     ap.add_argument("--no-video", action="store_true")
     ap.add_argument("--timeout", type=float, default=60.0)
+    ap.add_argument("--budget", type=float, default=None,
+                    help="USD: stop starting new runs once actual API spend since this command started exceeds it")
     args = ap.parse_args(argv)
 
     settings = load_settings()
@@ -264,6 +319,7 @@ def main(argv=None) -> int:
 
     if args.dry_run:
         est = estimate_codegen_cost(todo)
+        measured = measured_codegen_tokens(settings.log_path)
         print(f"output: {root}  (run_source={run_source}, replay={'on' if replay else 'off'})")
         for r in todo:
             print(f"  {r.task_id:24s} seed {r.seed}  condition {r.condition}  (max {MAX_ATTEMPTS[r.condition]} attempts)")
@@ -274,13 +330,31 @@ def main(argv=None) -> int:
             f"{est['generations']} x ${est['usd_per_generation']:.6f} = ${est['usd_total']:.2f}"
             + ("  [fake generator: actual cost $0]" if run_source == "fake" else "")
         )
+        if run_source == "live":
+            from core_robot.codegen.muse_generator import DEFAULT_MAX_OUTPUT_TOKENS
+
+            if measured:
+                m_in, m_out, n = measured
+                print(f"measured so far: {n} code-generation calls averaged {m_in:.0f} in + {m_out:.0f} out tokens "
+                      f"-> {est['generations']} x ${token_cost(m_in, m_out):.4f} = "
+                      f"${est['generations'] * token_cost(m_in, m_out):.2f}")
+            worst = est["generations"] * token_cost(max(measured[0] if measured else 0, 3000), DEFAULT_MAX_OUTPUT_TOKENS)
+            print(f"worst case (every call uses the {DEFAULT_MAX_OUTPUT_TOKENS}-token output cap): ${worst:.2f}"
+                  + (f"; --budget {args.budget:.2f} stops new runs after that much spend" if args.budget else ""))
         return 0
 
-    if args.plan_source == "predicted":
-        raise SystemExit("--plan-source predicted is not implemented yet")
     generator = make_generator(args.generator, settings)
     t0 = time.monotonic()
-    counts = run_matrix(todo, generator, root, args.plan_source, args.workers, not args.no_video, args.timeout)
+    started = time.time()
+    over_budget = lambda: False
+    if args.budget is not None:
+        from core_robot.perception.costs import actual_spend
+
+        over_budget = lambda: actual_spend(settings.log_path, started)["usd"] > args.budget
+    counts = run_matrix(todo, generator, root, args.plan_source, args.workers, not args.no_video, args.timeout,
+                        over_budget)
+    if counts.get("over_budget"):
+        print(f"BUDGET: {counts['over_budget']} runs not started (spend passed ${args.budget:.2f})")
     from core_robot.eval.report import write_report
     md, png = write_report(root)
     print(f"{counts.get('done', 0)} runs executed, {len(runs) - len(todo)} skipped, "

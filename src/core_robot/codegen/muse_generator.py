@@ -17,6 +17,8 @@ CODE_SCHEMA = {
     "required": ["code"],
     "additionalProperties": False,
 }
+# Room for reasoning plus the code: at 6000 tokens some replies were all reasoning and no code.
+DEFAULT_MAX_OUTPUT_TOKENS = 12000
 _FENCE = re.compile(r"```(?:python|py)?\s*\n(.*?)```", re.DOTALL)
 
 
@@ -43,12 +45,12 @@ class MuseGenerator:
     name = "muse"
     run_source = "live"
 
-    def __init__(self, client=None, max_output_tokens: int = 6000):
+    def __init__(self, client=None, max_output_tokens: int | None = None):
         if client is None:
             from core_robot.meta_client import MetaClient
             client = MetaClient()
         self.client = client
-        self.max_output_tokens = max_output_tokens
+        self.max_output_tokens = max_output_tokens or DEFAULT_MAX_OUTPUT_TOKENS
         self._api = primitives_reference()
 
     def __call__(self, *, task, plan, attempt, scene, feedback=None, image_path=None) -> dict:

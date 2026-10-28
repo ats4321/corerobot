@@ -208,3 +208,57 @@ def test_markdown_has_t8_line_and_totals():
     assert "| **t1-t7 total** | 2/4 (50%) |" in md
     assert "| **t8 (nearest to mug), separate** | 2/2 (100%) |" in md
     assert "| **overall t1-t8** | 4/6 (67%) |" in md
+
+
+# ---- predicted plans ----
+
+def _planner_results(tmp_path, rows):
+    p = tmp_path / "planner_results.json"
+    p.write_text(json.dumps({"rows": rows}))
+    return p
+
+
+def test_predicted_plan_is_loaded_from_seed0_demo(tmp_path):
+    from core_robot.demos.tasks import TASKS_BY_ID
+    from core_robot.eval.run_eval import predicted_plan
+
+    plan = {"objects": [{"name": "red_block", "color": "red", "kind": "block"},
+                        {"name": "blue_bin", "color": "blue", "kind": "bin"}],
+            "steps": [{"index": 0, "action": "pick_and_place", "object": "red_block", "destination": "blue_bin"}],
+            "goal": [{"subject": "red_block", "relation": "in", "target": "blue_bin"}]}
+    p = _planner_results(tmp_path, [{"demo": "t1_red_in_red_bin/seed_0", "plan": plan},
+                                    {"demo": "t1_red_in_red_bin/seed_1", "plan": None}])
+    got = predicted_plan(TASKS_BY_ID["t1_red_in_red_bin"], p)
+    assert got.steps[0].destination == "blue_bin"  # the (wrong) prediction, not the ground truth
+
+
+@pytest.mark.parametrize("rows,needle", [
+    ([{"demo": "t1_red_in_red_bin/seed_0", "plan": None, "planner_error": "empty reply"}], "no valid plan"),
+    ([], "no planner result"),
+])
+def test_missing_predicted_plan_is_never_replaced_by_ground_truth(tmp_path, monkeypatch, rows, needle):
+    from core_robot.eval import run_eval
+
+    p = _planner_results(tmp_path, rows)
+    real = run_eval.predicted_plan
+    monkeypatch.setattr(run_eval, "predicted_plan", lambda task, path=None: real(task, p))
+    calls = []
+
+    class Recording(FakeGenerator):
+        def __call__(self, **kw):
+            calls.append(kw)
+            return super().__call__(**kw)
+
+    spec = RunSpec("t1_red_in_red_bin", 100, "A")
+    run_matrix([spec], Recording(), tmp_path / "out", plan_source="predicted", record=False)
+    (row,) = read_csv(tmp_path / "out")
+    assert row["success"] == "0" and row["failure_category"] == "harness error" and row["plan_source"] == "predicted"
+    log = json.loads((run_path(tmp_path / "out", spec) / "run.json").read_text())
+    assert needle in log["plan_error"] and log["plan"] is None
+    assert calls == []  # nothing was generated from a substitute plan
+
+
+def test_budget_stops_new_runs(tmp_path):
+    counts = run_matrix(SMALL, FakeGenerator(), tmp_path, record=False, over_budget=lambda: True)
+    assert counts == {"over_budget": 4}
+    assert not list(tmp_path.glob("*/*/seed_*/run.json"))
