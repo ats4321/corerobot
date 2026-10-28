@@ -187,10 +187,14 @@ class MetaClient:
         schema: dict | None = None,
         system: str | None = None,
         max_output_tokens: int | None = None,
+        reasoning_effort: str | None = None,
     ) -> dict:
         """Call Muse Spark via the Responses API. Returns {"text", "raw", "usage": (in, out)}.
 
         With a schema, also "json" (parsed, or None) and "json_error" (None, or why parsing failed).
+        Also "status" and "incomplete_reason" (e.g. "max_output_tokens" when reasoning used the
+        whole output budget). reasoning_effort, if given, is sent as reasoning.effort
+        ("minimal" ... "max"); omitted, the API default applies.
 
         images: local image files, sent inline as base64 data URLs (input_image).
         video: a local .mp4, sent inline as a data URL (input_video, video_mode="inline")
@@ -213,8 +217,11 @@ class MetaClient:
             body["text"] = {"format": {"type": "json_schema", "name": "output", "schema": schema}}
         if max_output_tokens:
             body["max_output_tokens"] = max_output_tokens
+        if reasoning_effort:
+            body["reasoning"] = {"effort": reasoning_effort}
         resp = self._responses(body)
-        out = {"text": output_text(resp), "raw": resp, "usage": usage_tokens(resp)}
+        out = {"text": output_text(resp), "raw": resp, "usage": usage_tokens(resp), "status": resp.get("status"),
+               "incomplete_reason": (resp.get("incomplete_details") or {}).get("reason")}
         if schema is not None:
             try:
                 out["json"], out["json_error"] = json.loads(out["text"]), None

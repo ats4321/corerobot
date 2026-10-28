@@ -51,13 +51,15 @@ def plan_errors(pred: Plan | None, gt: Plan) -> list[str]:
             if any(p[1] == g[1] and p[2] != g[2] for p, g in zip(ps, gs)):
                 errors.append("wrong destination")
     if pg != gg:
-        pairs_p = {(s, t): r for s, r, t in pg}
-        pairs_g = {(s, t): r for s, r, t in gg}
-        if any(k in pairs_p and pairs_p[k] != r for k, r in pairs_g.items()):
+        # Atoms compared one by one (a pair can carry several relations). A missing atom whose
+        # (subject, target) pair appears among the extra atoms is a wrong relation.
+        missing, extra = gg - pg, pg - gg
+        same_pair = lambda a, atoms: any(b[0] == a[0] and b[2] == a[2] for b in atoms)
+        if any(same_pair(a, extra) for a in missing):
             errors.append("wrong goal relation")
-        if any(k not in pairs_p for k in pairs_g):
+        if any(not same_pair(a, extra) for a in missing):
             errors.append("missing goal atom")
-        if any(k not in pairs_g for k in pairs_p):
+        if any(not same_pair(a, missing) for a in extra):
             errors.append("extra goal atom")
     return errors
 

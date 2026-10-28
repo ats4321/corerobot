@@ -49,12 +49,15 @@ def load_ground_truth_plan(demo_id: str) -> Plan:
 
 
 def evaluate_planner(client, ids: list[str], perception_root: Path = PERCEPTION_DIR,
-                     out_root: Path = PLANNER_DIR) -> dict:
+                     out_root: Path = PLANNER_DIR, reasoning_effort: str | None = None, merge: bool = True) -> dict:
+    """Plan each demo and score it. With merge, rows for other demos already in
+    out_root/results.json are kept, so rerunning one demo does not drop the rest."""
     rows = []
     for demo_id in ids:
         try:
             perception = perception_for(client, demo_id, perception_root)
-            result = plan_from_video(client, perception["clip"]["path"], perception)
+            result = plan_from_video(client, perception["clip"]["path"], perception,
+                                     reasoning_effort=reasoning_effort)
         except HARNESS_ERRORS as e:
             rows.append({"demo": demo_id, "named": [], "strict": False, "lenient": False,
                          "errors": ["harness error"], "planner_attempts": 0,
@@ -67,7 +70,13 @@ def evaluate_planner(client, ids: list[str], perception_root: Path = PERCEPTION_
             "lenient": s["lenient"], "errors": s["errors"], "planner_attempts": len(result["attempts"]),
             "planner_error": result["error"], "tokens": list(result["tokens"]),
             "plan": result["plan"].model_dump(exclude_none=True) if result["plan"] else None,
+            "attempts": result["attempts"], "reasoning_effort": reasoning_effort,
         })
+    previous = out_root / "results.json"
+    if merge and previous.exists():
+        new = {r["demo"] for r in rows}
+        rows = sorted([r for r in json.loads(previous.read_text())["rows"] if r["demo"] not in new] + rows,
+                      key=lambda r: r["demo"])
     counts = Counter(e for r in rows for e in r["errors"])
     summary = {"demos": len(rows), "strict": sum(r["strict"] for r in rows),
                "lenient": sum(r["lenient"] for r in rows), "top_errors": counts.most_common(3), "rows": rows}

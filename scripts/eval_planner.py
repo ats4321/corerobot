@@ -34,6 +34,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--demos", default=None, help="comma-separated demo ids (default: all)")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--reasoning-effort", default=None, help="experiment only: reasoning.effort for planner calls")
+    ap.add_argument("--label", default=None, help="write results to data/runs/planner/experiments/<label>/")
     args = ap.parse_args()
     ids = args.demos.split(",") if args.demos else demo_ids()
     if args.dry_run:
@@ -45,7 +47,15 @@ def main() -> int:
         return 2
     from core_robot.meta_client import MetaClient
 
-    s = evaluate_planner(MetaClient(settings=settings), ids)
+    from core_robot.eval.demo_eval import PLANNER_DIR
+
+    out = PLANNER_DIR / "experiments" / args.label if args.label else PLANNER_DIR
+    if args.reasoning_effort and not args.label:
+        print("--reasoning-effort is an experiment: give it a --label so it does not overwrite the main results")
+        return 2
+    s = evaluate_planner(MetaClient(settings=settings), ids, out_root=out, reasoning_effort=args.reasoning_effort)
+    print(f"results: {out / 'results.json'}" + (f"  [EXPERIMENT {args.label}: reasoning_effort={args.reasoning_effort}]"
+                                                  if args.label else ""))
     print(f"{'demo':32s} {'strict':6s} {'lenient':7s} errors")
     for r in s["rows"]:
         err = ", ".join(r["errors"]) or "-"

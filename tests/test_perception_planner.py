@@ -477,3 +477,60 @@ def test_working_objects_send_no_extra_requests(tmp_path, clip):
     handler = _probe_handler(n, {}, {"red cube": [T1_CUBE_BOX]}, calls)
     t = track_object(_client_with(handler, tmp_path), clip["path"], "red_block", n, tmp_path / "kf", first_frame=first)
     assert calls == [("video", "red cube")] and t["coverage"] == 1.0 and "probe" not in t
+
+
+def _truncated_payload():
+    p = responses_payload("", input_tokens=6477, output_tokens=6000)
+    p["status"], p["incomplete_details"] = "incomplete", {"reason": "max_output_tokens"}
+    p["output"] = [p["output"][0]]  # reasoning only, no message (as recorded for t5 seed 0)
+    return p
+
+
+def test_planner_retries_truncated_reply_with_larger_budget(tmp_path):
+    gt = gt_plan("t1_red_in_red_bin/seed_0").model_dump(exclude_none=True)
+    replies = iter([_truncated_payload(), responses_payload(json.dumps(gt), input_tokens=6477, output_tokens=7000)])
+    t = ScriptedTransport(lambda m, p, b: next(replies))
+    client = MetaClient(settings=Settings(api_key=None, cache_dir=tmp_path / "c", log_path=tmp_path / "l.jsonl"),
+                        transport=t)
+    perception = {"naming": {"objects": ["red_block", "red_bin", "blue_bin"]}, "tracks": {},
+                  "clip": {"n_frames": 3, "size": (640, 480), "fps": 5}}
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    r = plan_from_video(client, video, perception)
+    first, second = r["attempts"]
+    assert first["error"] == "empty reply: response incomplete (max_output_tokens), no output text"
+    assert first["reply"] == "" and first["incomplete_reason"] == "max_output_tokens" and first["max_output_tokens"] == 6000
+    assert second["max_output_tokens"] == 16000 and second["error"] is None and r["plan"] is not None
+    b1, b2 = t.bodies()
+    assert b1["max_output_tokens"] == 6000 and b2["max_output_tokens"] == 16000
+    assert user_text(b1) == user_text(b2)  # nothing to show after an empty reply: same prompt
+    assert "reasoning" not in b1  # default: no reasoning effort sent
+
+
+def test_reasoning_effort_is_opt_in(tmp_path):
+    gt = gt_plan("t1_red_in_red_bin/seed_0").model_dump(exclude_none=True)
+    t = ScriptedTransport(lambda m, p, b: responses_payload(json.dumps(gt)))
+    client = MetaClient(settings=Settings(api_key=None, cache_dir=tmp_path / "c", log_path=tmp_path / "l.jsonl"),
+                        transport=t)
+    perception = {"naming": {"objects": ["red_block"]}, "tracks": {}, "clip": {"n_frames": 3, "size": (640, 480), "fps": 5}}
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    plan_from_video(client, video, perception, reasoning_effort="low")
+    assert t.bodies()[0]["reasoning"] == {"effort": "low"}
+
+
+def test_planner_rerun_of_one_demo_keeps_other_rows(world_run, tmp_path):
+    out = tmp_path / "planner"
+    client, root = world_run["client"], world_run["root"]
+    demo_eval.evaluate_planner(client, ALL_DEMOS[:3], root, out)
+    s = demo_eval.evaluate_planner(client, ALL_DEMOS[1:2], root, out)
+    assert [r["demo"] for r in s["rows"]] == ALL_DEMOS[:3] and s["demos"] == 3
+    assert all("attempts" in r and r["attempts"][0]["reply"] for r in s["rows"])
+
+
+def test_extra_relation_on_a_matched_pair_is_an_extra_atom():
+    gt = gt_plan("t5_line_up/seed_0")
+    d = gt.model_dump(exclude_none=True)
+    more = Plan.model_validate({**d, "goal": d["goal"] + [{"subject": "red_block", "relation": "next_to",
+                                                           "target": "green_block"}]})
+    assert score(more, gt)["errors"] == ["extra goal atom"]
