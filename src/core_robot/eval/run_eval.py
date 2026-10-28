@@ -76,14 +76,17 @@ def planned_runs(task_ids=None, seeds=None, conditions=CONDITIONS, limit: int | 
     return runs[:limit] if limit else runs
 
 
-def run_path(root: Path, spec: RunSpec) -> Path:
+def run_path(root: Path, spec: RunSpec, environment: str = "clean") -> Path:
+    """Clean runs: <root>/<task>/<condition>/seed_<n>; perturbed runs under <root>/perturbed/."""
+    if environment != "clean":
+        root = root / environment
     return root / spec.task_id / spec.condition / f"seed_{spec.seed}"
 
 
-def is_finished(root: Path, spec: RunSpec) -> bool:
+def is_finished(root: Path, spec: RunSpec, environment: str = "clean") -> bool:
     """A run is done when its log is finished and it did not end in a harness error
     (generator/API/replay failure or sandbox crash); those are redone on resume."""
-    p = run_path(root, spec) / "run.json"
+    p = run_path(root, spec, environment) / "run.json"
     if not p.exists():
         return False
     try:
@@ -135,12 +138,13 @@ def plan_for(task, seed: int, plan_source: str, planner_results: Path | None = N
 def run_one(spec: RunSpec, generator, root: Path, plan_source: str, record: bool, timeout_s: float,
             over_budget=lambda: False, offset_cm: float | None = None) -> str:
     """Execute one run unless it is already finished. Returns "done", "skipped" or "over_budget"."""
-    if is_finished(root, spec):
+    environment = "perturbed" if offset_cm else "clean"
+    if is_finished(root, spec, environment):
         return "skipped"
     if over_budget():
         return "over_budget"
     task = TASKS_BY_ID[spec.task_id]
-    out = run_path(root, spec)
+    out = run_path(root, spec, environment)
     t0 = time.monotonic()
     meta = {"plan_source": plan_source, "run_source": generator.run_source, "generator": generator.name,
             "environment": "perturbed" if offset_cm else "clean"}
@@ -201,6 +205,19 @@ def attempt_one_cache_status(runs, plan_source: str, settings) -> tuple[int, int
         new += not gen.client.is_cached(key)
     repairs = sum(MAX_ATTEMPTS[r.condition] - 1 for r in runs)
     return new, repairs
+
+
+def condition_a_failures(root: Path, environment: str, runs) -> set | None:
+    """(task, seed) pairs whose condition-A run in this environment failed, if A covers all of them."""
+    pairs = {(r.task_id, r.seed) for r in runs}
+    failed = set()
+    for task_id, seed in pairs:
+        p = run_path(root, RunSpec(task_id, seed, "A"), environment) / "run.json"
+        if not p.exists():
+            return None
+        if not json.loads(p.read_text()).get("success"):
+            failed.add((task_id, seed))
+    return failed
 
 
 def measured_codegen_tokens(log_path: Path) -> tuple[float, float, int] | None:
@@ -279,7 +296,7 @@ def row_from_log(log: dict) -> dict:
 
 def write_results_csv(root: Path) -> Path:
     rows = []
-    for p in sorted(root.glob("*/*/seed_*/run.json")):
+    for p in sorted(list(root.glob("*/*/seed_*/run.json")) + list(root.glob("perturbed/*/*/seed_*/run.json"))):
         log = json.loads(p.read_text())
         if log.get("finished"):
             rows.append(row_from_log(log))
@@ -380,7 +397,7 @@ def main(argv=None) -> int:
         raise SystemExit(f"--conditions must be a subset of {CONDITIONS}")
     runs = planned_runs(resolve_tasks(args.tasks), seeds, conditions, limit=args.limit)
     offset_cm = resolve_offset(args.environment, args.offset_cm, {r.seed for r in runs})
-    todo = [r for r in runs if not is_finished(root, r)]
+    todo = [r for r in runs if not is_finished(root, r, args.environment)]
 
     if args.dry_run:
         est = estimate_codegen_cost(todo)
@@ -398,21 +415,33 @@ def main(argv=None) -> int:
         if run_source == "live":
             from core_robot.codegen.muse_generator import DEFAULT_MAX_OUTPUT_TOKENS
 
+            new_gens = None
             if settings.api_key or settings.replay:
                 new1, repairs = attempt_one_cache_status(todo, args.plan_source, settings)
                 per = token_cost(*(measured[:2])) if measured else token_cost(ASSUMED_TOKENS_IN, ASSUMED_TOKENS_OUT)
                 print(f"cache check: attempt 1 needs a new generation in {new1} of {len(todo)} runs "
-                      f"(the rest are cached); conditions B/C add at most {repairs} repair generations")
-                print(f"expected new spend: ({new1} + up to {repairs}) x ${per:.4f} = ${new1 * per:.2f} "
-                      f"to ${(new1 + repairs) * per:.2f}")
+                      f"(the rest are cached, e.g. shared with condition A); conditions B/C add at most "
+                      f"{repairs} repair generations (2 per B/C run)")
+                failed_a = condition_a_failures(root, args.environment, todo)
+                if failed_a is not None:
+                    bc = [r for r in todo if r.condition in ("B", "C")]
+                    tight = sum(MAX_ATTEMPTS[r.condition] - 1 for r in bc if (r.task_id, r.seed) in failed_a)
+                    print(f"condition A in this environment failed {len(failed_a)} (task, seed) pairs; B/C repair "
+                          f"only where attempt 1 fails, so at most {tight} repair generations")
+                    repairs = tight
+                print(f"new spend: ({new1} attempt-1 + up to {repairs} repairs) x ${per:.4f} = "
+                      f"${new1 * per:.2f} to ${(new1 + repairs) * per:.2f}")
+                new_gens = new1 + repairs
 
             if measured:
                 m_in, m_out, n = measured
                 print(f"measured so far: {n} code-generation calls averaged {m_in:.0f} in + {m_out:.0f} out tokens "
                       f"-> {est['generations']} x ${token_cost(m_in, m_out):.4f} = "
                       f"${est['generations'] * token_cost(m_in, m_out):.2f}")
-            worst = est["generations"] * token_cost(max(measured[0] if measured else 0, 3000), DEFAULT_MAX_OUTPUT_TOKENS)
-            print(f"worst case (every call uses the {DEFAULT_MAX_OUTPUT_TOKENS}-token output cap): ${worst:.2f}"
+            n_worst = est["generations"] if new_gens is None else new_gens
+            worst = n_worst * token_cost(max(measured[0] if measured else 0, 3000), DEFAULT_MAX_OUTPUT_TOKENS)
+            print(f"worst case ({n_worst} new generations, each using the {DEFAULT_MAX_OUTPUT_TOKENS}-token output cap): "
+                  f"${worst:.2f}"
                   + (f"; --budget {args.budget:.2f} stops new runs after that much spend" if args.budget else ""))
         return 0
 

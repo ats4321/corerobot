@@ -262,3 +262,16 @@ def test_budget_stops_new_runs(tmp_path):
     counts = run_matrix(SMALL, FakeGenerator(), tmp_path, record=False, over_budget=lambda: True)
     assert counts == {"over_budget": 4}
     assert not list(tmp_path.glob("*/*/seed_*/run.json"))
+
+
+def test_clean_and_perturbed_runs_do_not_collide(tmp_path):
+    spec = RunSpec("t3_stack_green_on_red", 200, "A")
+    run_matrix([spec], FakeGenerator(), tmp_path, record=False)
+    counts = run_matrix([spec], FakeGenerator(), tmp_path, record=False, offset_cm=4)
+    assert counts == {"done": 1}  # the clean run did not count as the perturbed one
+    assert (run_path(tmp_path, spec) / "run.json").exists()
+    assert (run_path(tmp_path, spec, "perturbed") / "run.json").exists()
+    rows = read_csv(tmp_path)
+    assert sorted(r["environment"] for r in rows) == ["clean", "perturbed"]
+    by_env = {r["environment"]: r for r in rows}
+    assert by_env["clean"]["success"] == "1" and by_env["perturbed"]["success"] == "0"  # 4 cm breaks the stack
