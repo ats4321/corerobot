@@ -19,21 +19,33 @@ MOVE_PX = 12  # a box center that shifts more than this (pixels) counts as moved
 
 
 def perceive(video: str | Path, client, out_dir: str | Path, fps: float = 5.0, keyframes: int = 8,
-             overlay: bool = True) -> dict:
+             overlay: bool = True, footage: str = "sim") -> dict:
+    """footage="sim" (default; simulator demos) or "real" (real-footage mode, perception.real_mode)."""
+    if footage not in ("sim", "real"):
+        raise ValueError(f"footage must be 'sim' or 'real', got {footage!r}")
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     clip = resample_video(video, out / "video_5fps.mp4", fps)
     first = save_frame(clip["path"], 0, out / "first_frame.png")
     naming = name_objects(client, first)
-    tracks = {
-        name: track_object(client, clip["path"], name, clip["n_frames"], out / "keyframes" / name, keyframes,
-                           first_frame=first)
-        for name in naming["objects"]
-    }
+    real_report = None
+    if footage == "real":
+        from core_robot.perception.real_mode import track_all_real
+
+        tracks, real_report = track_all_real(client, clip["path"], naming["objects"], clip["n_frames"], first,
+                                             out / "keyframes")
+    else:
+        tracks = {
+            name: track_object(client, clip["path"], name, clip["n_frames"], out / "keyframes" / name, keyframes,
+                               first_frame=first)
+            for name in naming["objects"]
+        }
     result = {
         "video": str(video), "clip": clip, "first_frame": str(first), "naming": naming, "tracks": tracks,
         "overlay": str(render_overlay(clip["path"], tracks, out / "overlay.mp4", clip["fps"])) if overlay else None,
     }
+    if footage == "real":
+        result.update(footage_mode="real", real_mode=real_report)
     (out / "perception.json").write_text(json.dumps(result, indent=1))
     return result
 

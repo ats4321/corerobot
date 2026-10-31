@@ -1,0 +1,14 @@
+{
+ "clip": "synthetic_sort_red_blue.mp4",
+ "footage": "synthetic (AI-generated, not real footage)",
+ "labelled_by": "hand, from watching the clip",
+ "description": "A hand puts the red cube into the red box, then the blue cube into the blue box.",
+ "steps": [
+  {"action": "pick_and_place", "object": "red_block", "destination": "red_bin"},
+  {"action": "pick_and_place", "object": "blue_block", "destination": "blue_bin"}
+ ],
+ "goal": [
+  {"subject": "red_block", "relation": "in", "target": "red_bin"},
+  {"subject": "blue_block", "relation": "in", "target": "blue_bin"}
+ ]
+}

@@ -42,6 +42,8 @@ def main() -> int:
     ap.add_argument("--budget", type=float, default=0.5)
     ap.add_argument("--seed", type=int, default=REAL_SEED)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--footage", choices=["real", "sim"], default="real",
+                    help="perception mode: real (image-relative checks; default for clips) or sim")
     args = ap.parse_args()
     clip = Path(args.clip)
     if not clip.is_file():
@@ -67,9 +69,20 @@ def main() -> int:
             print(f"\n[normalized] {payload['path']} ({payload['size'][0]}x{payload['size'][1]}, {payload['duration_s']} s)")
         elif name == "perception":
             print(f"\n[perception] named: {payload['named']}  phrases: {payload['phrases']}")
+            for obj, ch in payload.get("chosen", {}).items():
+                print(f"  {obj}: from '{ch['from_phrase']}' id {ch['object_id']}, frames {ch['frames']} ({ch['n_frames']})")
+            for phrase, ms in ((payload.get("real_mode") or {}).get("merges") or {}).items():
+                for m in ms:
+                    print(f"  merged '{phrase}' ids {m['merged']} (frames {m['frames']}, overlap {m['overlap']})")
             print(f"  coverage: {payload['coverage']}\n  overlay: {payload['overlay']}")
         elif name == "plan":
             print("\n[plan]", json.dumps(payload["plan"], indent=1) if payload["plan"] else f"none: {payload['error']}")
+            pv = payload.get("plan_vs_clip")
+            if pv is not None:
+                print(f"\n[plan_matches_clip] {pv['plan_matches_clip']}  (against {pv['expected_plan']})"
+                      + "".join(f"\n  - {d}" for d in pv["differences"]))
+            else:
+                print("\n[plan_matches_clip] not checked: no <clip>.expected_plan.json")
         elif name == "attempt":
             o = payload.get("outcome", {})
             print(f"\n[attempt {payload['attempt']}] {'success' if o.get('success') else 'failed'}; "
@@ -83,8 +96,12 @@ def main() -> int:
             for g in payload.get("goal", []):
                 print(f"  - {g}")
 
-    s = run_pipeline(clip, MetaClient(settings=settings, guard=guard), seed=args.seed, on_stage=show)
-    print(f"\nspend this clip: ${guard.spent:.3f} (budget ${args.budget:.2f}); summary: "
+    s = run_pipeline(clip, MetaClient(settings=settings, guard=guard), seed=args.seed, on_stage=show,
+                     footage=args.footage)
+    pv = s.get("plan_vs_clip")
+    print(f"\nplan_matches_clip: {pv['plan_matches_clip'] if pv else 'not checked'}   "
+          f"simulator success (plan carried out): {s.get('outcome', {}).get('success')}")
+    print(f"spend this clip: ${guard.spent:.3f} (budget ${args.budget:.2f}); summary: "
           f"data/runs/real/{s['name']}/summary.json")
     return 0 if s.get("outcome", {}).get("success") else 1
 

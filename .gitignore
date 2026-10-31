@@ -17,3 +17,4 @@ __pycache__/
 # Real demonstration clips (may be private): kept out of git
 data/real/*
 !data/real/.gitkeep
+!data/real/*.expected_plan.json

@@ -62,8 +62,13 @@ def estimate_cost(duration_s: float, n_objects: int = MAX_OBJECTS, expected_obje
 
 
 def run_pipeline(clip: str | Path, client, out_root: Path = REAL_DIR, seed: int = REAL_SEED,
-                 on_stage: Callable[[str, dict], None] | None = None, record: bool = True) -> dict:
-    """Run the whole pipeline on one clip. Returns the summary also written to summary.json."""
+                 on_stage: Callable[[str, dict], None] | None = None, record: bool = True,
+                 footage: str = "real") -> dict:
+    """Run the whole pipeline on one clip. Returns the summary also written to summary.json.
+
+    footage: perception mode ("real" for camera footage; "sim" is the simulator-demo path).
+    If <clip>.expected_plan.json exists, the summary gets plan_matches_clip (separate from the
+    simulator success flag)."""
     from core_robot.codegen.muse_generator import MuseGenerator
     from core_robot.perception.perceive import perceive, summary_text
     from core_robot.planning.video_planner import plan_from_video
@@ -76,7 +81,7 @@ def run_pipeline(clip: str | Path, client, out_root: Path = REAL_DIR, seed: int 
     out = Path(out_root) / name
     out.mkdir(parents=True, exist_ok=True)
     summary: dict = {"clip": str(clip), "name": name, "seed": seed, "prompt_hash": prompt_hash(),
-                     "git_commit": git_commit(), "judged_against": JUDGED_AGAINST}
+                     "git_commit": git_commit(), "judged_against": JUDGED_AGAINST, "footage_mode": footage}
 
     def save():
         (out / "summary.json").write_text(json.dumps(summary, indent=1, default=str))
@@ -94,13 +99,17 @@ def run_pipeline(clip: str | Path, client, out_root: Path = REAL_DIR, seed: int 
     stage("normalized", norm)
 
     try:
-        perception = perceive(norm["path"], client, out / "perception")
+        perception = perceive(norm["path"], client, out / "perception", footage=footage)
     except (ApiError, BudgetExceeded, ReplayMiss) as e:
         return stopped("perception", e)
     summary["perception"] = {"named": perception["naming"]["objects"], "naming_error": perception["naming"]["error"],
                              "overlay": perception["overlay"], "tracks": summary_text(perception),
                              "coverage": {n: round(t["coverage"], 2) for n, t in perception["tracks"].items()},
-                             "phrases": {n: t.get("concept") for n, t in perception["tracks"].items()}}
+                             "phrases": {n: t.get("concept") for n, t in perception["tracks"].items()},
+                             "chosen": {n: {"from_phrase": t.get("concept"), "object_id": t.get("object_id"),
+                                            "frames": [min(t["frames"]), max(t["frames"])] if t["frames"] else None,
+                                            "n_frames": len(t["frames"])} for n, t in perception["tracks"].items()},
+                             "real_mode": perception.get("real_mode")}
     stage("perception", summary["perception"])
 
     try:
@@ -110,9 +119,15 @@ def run_pipeline(clip: str | Path, client, out_root: Path = REAL_DIR, seed: int 
     plan = planned["plan"]
     summary["plan"] = plan.model_dump(exclude_none=True) if plan else None
     summary["planner_attempts"] = planned["attempts"]
+    from core_robot.real.expected import compare_plan, expected_plan_path, load_expected
+
+    expected = load_expected(clip)
+    if expected is not None:
+        summary["plan_vs_clip"] = {**compare_plan(summary["plan"], expected),
+                                   "expected_plan": str(expected_plan_path(clip))}
     if plan is not None:
         (out / "plan.json").write_text(json.dumps(summary["plan"], indent=1))
-    stage("plan", {"plan": summary["plan"], "error": planned["error"]})
+    stage("plan", {"plan": summary["plan"], "error": planned["error"], "plan_vs_clip": summary.get("plan_vs_clip")})
     if plan is None:
         summary["outcome"] = {"success": False, "reason": f"no valid plan: {planned['error']}"}
         stage("outcome", summary["outcome"])
