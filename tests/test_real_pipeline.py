@@ -154,3 +154,35 @@ def test_script_without_clip_says_so(tmp_path):
     r = subprocess.run([sys.executable, "scripts/run_real_demo.py", str(tmp_path / "missing.mp4"), "--dry-run"],
                        capture_output=True, text=True, cwd=Path(__file__).resolve().parents[1])
     assert r.returncode == 2 and "no such clip" in r.stdout
+
+
+@pytest.mark.parametrize("variant", ["tracks", "omit", "replay"])
+def test_track_summary_ablation_variants(tmp_path, variant):
+    world = FakeRealWorld()
+    old = tmp_path / "old_tracks.txt"
+    old.write_text("Tracked objects (old run):\n- red_bin: named but not found by segmentation\n")
+    client = _client(tmp_path, world)
+    s = run_pipeline(_clip(tmp_path), client, out_root=tmp_path / "real", plan_only=True,
+                     track_summary=variant, replay_tracks=old if variant == "replay" else None)
+    (planner,) = [b for b in client.transport.bodies("muse-spark-1.3")
+                  if any(p["type"] == "input_video" for p in user_parts(b))]
+    prompt = user_text(planner)
+    saved = json.loads((tmp_path / "real/my_clip/summary.json").read_text())
+    assert saved["track_summary_variant"] == variant and saved["prompt_hash"] == frozen()["prompt_hash"]
+    assert s["plan"] == PLAN and s["outcome"]["success"] is None and world.codegen == []
+    assert not (tmp_path / "real/my_clip/repair").exists()
+    sent = saved["planner_track_text"]
+    if variant == "tracks":
+        assert sent.startswith("Tracked objects (") and "- red_block: " in sent
+    elif variant == "omit":
+        assert sent == "" and "Segmentation tracks" not in prompt and "Tracked objects" not in prompt
+    else:
+        assert sent == old.read_text().strip()
+    if sent:
+        assert "## Segmentation tracks from SAM 3.1\n" + sent + "\n\n## How to write the plan" in prompt
+    assert "## Objects detected in the first frame" in prompt and "## How to write the plan" in prompt
+
+
+def test_track_summary_variant_is_validated(tmp_path):
+    with pytest.raises(ValueError):
+        run_pipeline(_clip(tmp_path), None, out_root=tmp_path / "real", track_summary="replay")

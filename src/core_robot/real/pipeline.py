@@ -63,10 +63,15 @@ def estimate_cost(duration_s: float, n_objects: int = MAX_OBJECTS, expected_obje
 
 def run_pipeline(clip: str | Path, client, out_root: Path = REAL_DIR, seed: int = REAL_SEED,
                  on_stage: Callable[[str, dict], None] | None = None, record: bool = True,
-                 footage: str = "real") -> dict:
+                 footage: str = "real", track_summary: str = "tracks", replay_tracks: str | Path | None = None,
+                 plan_only: bool = False) -> dict:
     """Run the whole pipeline on one clip. Returns the summary also written to summary.json.
 
     footage: perception mode ("real" for camera footage; "sim" is the simulator-demo path).
+    track_summary (ablation): "tracks" sends this run's SAM track summary to the planner (default),
+    "omit" leaves it out (video + object names only), "replay" sends the text in replay_tracks.
+    The prompt templates and prompt hash are unchanged; the variant and the exact track text sent
+    are recorded in summary.json. plan_only stops after planning (no code generation).
     If <clip>.expected_plan.json exists, the summary gets plan_matches_clip (separate from the
     simulator success flag)."""
     from core_robot.codegen.muse_generator import MuseGenerator
@@ -76,12 +81,15 @@ def run_pipeline(clip: str | Path, client, out_root: Path = REAL_DIR, seed: int 
     from core_robot.real.normalize import normalize_clip
     from core_robot.repair.loop import run_with_repair
 
+    if track_summary not in ("tracks", "omit", "replay") or (track_summary == "replay") != (replay_tracks is not None):
+        raise ValueError("track_summary must be tracks, omit, or replay (replay needs replay_tracks)")
     stage = on_stage or (lambda name, payload: None)
     name = slug(clip)
     out = Path(out_root) / name
     out.mkdir(parents=True, exist_ok=True)
     summary: dict = {"clip": str(clip), "name": name, "seed": seed, "prompt_hash": prompt_hash(),
-                     "git_commit": git_commit(), "judged_against": JUDGED_AGAINST, "footage_mode": footage}
+                     "git_commit": git_commit(), "judged_against": JUDGED_AGAINST, "footage_mode": footage,
+                     "track_summary_variant": track_summary}
 
     def save():
         (out / "summary.json").write_text(json.dumps(summary, indent=1, default=str))
@@ -112,8 +120,13 @@ def run_pipeline(clip: str | Path, client, out_root: Path = REAL_DIR, seed: int 
                              "real_mode": perception.get("real_mode")}
     stage("perception", summary["perception"])
 
+    track_text = {"tracks": None, "omit": "",
+                  "replay": Path(replay_tracks).read_text().strip() if replay_tracks else None}[track_summary]
+    summary["planner_track_text"] = summary_text(perception) if track_text is None else track_text
+    if replay_tracks:
+        summary["replay_tracks"] = str(replay_tracks)
     try:
-        planned = plan_from_video(client, perception["clip"]["path"], perception)
+        planned = plan_from_video(client, perception["clip"]["path"], perception, track_text=track_text)
     except (ApiError, BudgetExceeded, ReplayMiss) as e:
         return stopped("planning", e)
     plan = planned["plan"]
@@ -130,6 +143,11 @@ def run_pipeline(clip: str | Path, client, out_root: Path = REAL_DIR, seed: int 
     stage("plan", {"plan": summary["plan"], "error": planned["error"], "plan_vs_clip": summary.get("plan_vs_clip")})
     if plan is None:
         summary["outcome"] = {"success": False, "reason": f"no valid plan: {planned['error']}"}
+        stage("outcome", summary["outcome"])
+        save()
+        return summary
+    if plan_only:
+        summary["outcome"] = {"success": None, "reason": "plan only: no code generation or simulation run"}
         stage("outcome", summary["outcome"])
         save()
         return summary

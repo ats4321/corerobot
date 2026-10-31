@@ -1,0 +1,5 @@
+Tracked objects (54 frames at 5 fps, image 960x540 px; boxes are [x1, y1, x2, y2] in pixels; image left is the robot's left):
+- red_bin: named but not found by segmentation
+- blue_bin: start box [96, 167, 307, 431] (frame 6), end box [95, 167, 309, 431] (frame 53); did not move; mask coverage 89%
+- red_block: start box [681, 151, 899, 404] (frame 0), end box [680, 151, 897, 403] (frame 53); did not move; mask coverage 100%
+- blue_block: start box [477, 203, 533, 280] (frame 0), end box [477, 204, 533, 281] (frame 36); did not move; mask coverage 69%

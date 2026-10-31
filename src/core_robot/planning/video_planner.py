@@ -31,8 +31,11 @@ def relation_definitions() -> str:
     return doc.split("Relations (subject relation target):", 1)[1].strip("\n")
 
 
-def planner_prompt(perception: dict) -> str:
+def planner_prompt(perception: dict, track_text: str | None = None) -> str:
+    """track_text (ablations only): replaces the SAM track summary; "" leaves the section out."""
     names = perception["naming"]["objects"]
+    tracks = summary_text(perception) if track_text is None else track_text
+    track_section = ["", "## Segmentation tracks from SAM 3.1", tracks] if tracks else []
     objects = "\n".join(
         f"- {n}: {VOCABULARY[n]} (color {SIM_OBJECTS[n].color}, kind {SIM_OBJECTS[n].kind})" for n in names
     )
@@ -40,7 +43,7 @@ def planner_prompt(perception: dict) -> str:
         "The video shows a robot arm, filmed from behind its right shoulder. The image's left is the "
         "robot's left (+y); the far side of the table is the robot's front (+x).",
         "", "## Objects detected in the first frame (use exactly these names)", objects or "(none detected)",
-        "", "## Segmentation tracks from SAM 3.1", summary_text(perception),
+        *track_section,
         "", "## How to write the plan",
         "- objects: every object listed above, with its color and kind.",
         "- steps: one pick_and_place per object the robot moves, in the order shown. index starts at 0.",
@@ -68,16 +71,17 @@ def _reply_error(r: dict) -> str | None:
 
 def plan_from_video(client, clip: str | Path, perception: dict, max_output_tokens: int = FIRST_MAX_OUTPUT_TOKENS,
                     retry_max_output_tokens: int = RETRY_MAX_OUTPUT_TOKENS,
-                    reasoning_effort: str | None = None) -> dict:
+                    reasoning_effort: str | None = None, track_text: str | None = None) -> dict:
     """{"plan": Plan | None, "attempts": [...], "tokens": (in, out), "error": str | None}.
 
     At most one retry, on an empty reply, invalid JSON, or a schema validation error. The
     retry gets a larger output budget (a reply that spent its whole budget on reasoning has
     no text). After a validation error the retry also sees the error and the previous reply.
     Every attempt records the raw reply text, status, incomplete reason, usage and budget.
+    track_text: see planner_prompt (ablations only; default is the SAM track summary).
     """
     schema = Plan.model_json_schema()
-    base = planner_prompt(perception)
+    base = planner_prompt(perception, track_text)
     attempts, t_in, t_out = [], 0, 0
     prompt, budget = base, max_output_tokens
     for _ in range(2):  # first try + one retry

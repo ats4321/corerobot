@@ -2,6 +2,7 @@
 
     .venv/bin/python scripts/run_real_demo.py data/real/clip.mp4 --dry-run
     .venv/bin/python scripts/run_real_demo.py data/real/clip.mp4 [--budget 0.5] [--seed 300]
+    ablation: [--track-summary tracks|omit|replay --replay-tracks FILE] [--plan-only] [--out-root DIR]
 
 Normalize -> SAM perception -> plan (frozen simulator prompts) -> a simulator scene with exactly
 the plan's objects -> generated code -> sandbox, with condition C repair (up to 3 attempts).
@@ -44,6 +45,11 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--footage", choices=["real", "sim"], default="real",
                     help="perception mode: real (image-relative checks; default for clips) or sim")
+    ap.add_argument("--out-root", default=None, help="parent folder for the run (default data/runs/real)")
+    ap.add_argument("--track-summary", choices=["tracks", "omit", "replay"], default="tracks",
+                    help="ablation: SAM track summary sent to the planner (this run's; none; or --replay-tracks text)")
+    ap.add_argument("--replay-tracks", default=None, help="text file of a track summary for --track-summary replay")
+    ap.add_argument("--plan-only", action="store_true", help="stop after planning (no code generation)")
     args = ap.parse_args()
     clip = Path(args.clip)
     if not clip.is_file():
@@ -90,20 +96,27 @@ def main() -> int:
             if payload.get("report") and not o.get("success"):
                 print("  " + payload["report"].replace("\n", "\n  "))
         elif name == "outcome":
+            if payload["success"] is None:
+                print(f"\n[outcome] {payload['reason']}")
+                return
             print(f"\n[outcome] {'SUCCESS' if payload['success'] else 'FAILED'}"
                   f"{' after ' + str(payload.get('attempts')) + ' attempt(s)' if payload.get('attempts') else ''}")
             print(f"  {payload.get('judged_against') or payload.get('reason')}")
             for g in payload.get("goal", []):
                 print(f"  - {g}")
 
-    s = run_pipeline(clip, MetaClient(settings=settings, guard=guard), seed=args.seed, on_stage=show,
-                     footage=args.footage)
+    from core_robot.real.pipeline import REAL_DIR
+
+    s = run_pipeline(clip, MetaClient(settings=settings, guard=guard), out_root=Path(args.out_root or REAL_DIR),
+                     seed=args.seed, on_stage=show, footage=args.footage, track_summary=args.track_summary,
+                     replay_tracks=args.replay_tracks, plan_only=args.plan_only)
+    print(f"\ntrack summary variant: {s['track_summary_variant']}   prompt hash: {s['prompt_hash']}")
     pv = s.get("plan_vs_clip")
     print(f"\nplan_matches_clip: {pv['plan_matches_clip'] if pv else 'not checked'}   "
           f"simulator success (plan carried out): {s.get('outcome', {}).get('success')}")
     print(f"spend this clip: ${guard.spent:.3f} (budget ${args.budget:.2f}); summary: "
-          f"data/runs/real/{s['name']}/summary.json")
-    return 0 if s.get("outcome", {}).get("success") else 1
+          f"{Path(args.out_root or REAL_DIR) / s['name'] / 'summary.json'}")
+    return 0 if s.get("outcome", {}).get("success") or args.plan_only and s.get("plan") else 1
 
 
 if __name__ == "__main__":
