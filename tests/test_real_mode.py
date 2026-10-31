@@ -128,3 +128,16 @@ def test_plan_matches_clip():
 
 def test_expected_plan_path_sits_next_to_clip():
     assert expected_plan_path("data/real/a b.mp4") == Path("data/real/a b.expected_plan.json")
+
+
+def test_summary_text_survives_perception_json_round_trip(recorded, tmp_path):
+    from core_robot.perception.perceive import load_perception, summary_text
+
+    named, calls, frames, n = recorded
+    perception = {"clip": {"n_frames": n, "fps": 5.0, "size": [960, 540]}, "naming": {"objects": named},
+                  "tracks": assign(named, calls, frames, n)["tracks"]}
+    in_memory = summary_text(perception)
+    assert "(frame 53)" in in_memory and "(frame 9)" not in in_memory  # string-sorted keys would end at "9"
+    (tmp_path / "perception.json").write_text(json.dumps(perception, indent=1))
+    assert summary_text(json.loads((tmp_path / "perception.json").read_text())) == in_memory
+    assert summary_text(load_perception(tmp_path / "perception.json")) == in_memory

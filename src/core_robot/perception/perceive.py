@@ -70,13 +70,14 @@ def track_summary(perception: dict) -> dict[str, dict]:
     """Per object: first/last seen frame and box, whether it moved, and when."""
     out = {}
     for name, t in perception["tracks"].items():
-        frames = sorted(t["frames"])
+        by_frame = {int(f): r for f, r in t["frames"].items()}  # keys are strings after a JSON round trip
+        frames = sorted(by_frame)
         if not frames:
             out[name] = {"seen": False}
             continue
-        start, end = t["frames"][frames[0]]["box"], t["frames"][frames[-1]]["box"]
+        start, end = by_frame[frames[0]]["box"], by_frame[frames[-1]]["box"]
         c0 = _center(start)
-        moving = [f for f in frames if max(abs(a - b) for a, b in zip(_center(t["frames"][f]["box"]), c0)) > MOVE_PX]
+        moving = [f for f in frames if max(abs(a - b) for a, b in zip(_center(by_frame[f]["box"]), c0)) > MOVE_PX]
         out[name] = {
             "seen": True, "coverage": round(t["coverage"], 2), "first_frame": frames[0], "last_frame": frames[-1],
             "start_box": start, "end_box": end, "moved": bool(moving) and
