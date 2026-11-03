@@ -62,8 +62,8 @@ def test_recorded_plausibility_is_image_relative(recorded):
     _, calls, frames, _ = recorded
     box = calls["red cube"]["frames"][0][0]
     assert plausible_real("red_bin", box["box"], box["mask"], frames[0])[0]
-    ok, why = plausible_real("red_block", box["box"], box["mask"], frames[0])
-    assert not ok and "of the frame" in why[0]
+    # ~11% of the frame: under the loose block ceiling; it is kept from being a block by being a bin
+    assert plausible_real("red_block", box["box"], box["mask"], frames[0])[0]
     cube = calls["red cube"]["frames"][0][1]
     assert plausible_real("red_block", cube["box"], cube["mask"], frames[0])[0]
     assert not plausible_real("blue_block", cube["box"], cube["mask"], frames[0])[0]  # colour
@@ -141,3 +141,59 @@ def test_summary_text_survives_perception_json_round_trip(recorded, tmp_path):
     (tmp_path / "perception.json").write_text(json.dumps(perception, indent=1))
     assert summary_text(json.loads((tmp_path / "perception.json").read_text())) == in_memory
     assert summary_text(load_perception(tmp_path / "perception.json")) == in_memory
+
+
+def _calls(boxes_by_phrase, n=5):
+    return {ph: {"color": color, "frames": {f: {i: _rec(b) for i, b in enumerate(boxes)} for f in range(n)}}
+            for ph, (color, boxes) in boxes_by_phrase.items()}
+
+
+def test_block_must_be_smaller_than_smallest_assigned_bin():
+    import numpy as np
+
+    frame = {0: np.zeros((480, 640, 3), np.uint8)}  # masks absent: no colour check
+    bin_box, big_red = (100, 100, 199, 199), (300, 100, 409, 209)  # 100x100 bin; 110x110 "block"
+    calls = _calls({"blue bin": ("blue", [bin_box]), "red cube": ("red", [big_red])})
+    r = assign(["blue_bin", "red_block"], calls, frame, 5)
+    assert r["tracks"]["blue_bin"]["object_id"] == "0" and r["tracks"]["red_block"] is None
+    assert "not smaller than the smallest assigned bin" in r["candidates"]["red_block"][0]["why_not"][-1]
+    # without a bin in the clip, only the absolute ceiling applies
+    assert assign(["red_block"], _calls({"red cube": ("red", [big_red])}), frame, 5)["tracks"]["red_block"]
+
+
+STACK = Path(__file__).parent / "fixtures" / "synthetic_stack_blue_on_red"
+
+
+@pytest.fixture(scope="module")
+def stack():
+    d = json.loads((STACK / "sam_video.json").read_text())
+    calls = {ph: {"color": c["color"], "frames": parse_sam(c["text"])} for ph, c in d["calls"].items()}
+    frames = {int(p.stem.split("_")[1]): iio.imread(p) for p in STACK.glob("frame_*.png")}
+    return d["named"], calls, frames, d["n_frames"]
+
+
+def test_recorded_stack_close_up_cubes_are_accepted(stack):
+    named, calls, frames, n = stack
+    r = assign(named, calls, frames, n)
+    assert {k: (t["concept"], t["object_id"]) for k, t in r["tracks"].items()} == {
+        "red_block": ("red cube", "0"), "blue_block": ("blue cube", "0")}
+    assert all(t["coverage"] == 1.0 for t in r["tracks"].values())
+    for c in calls.values():  # the close-up cubes cover more than the old fixed 4% limit
+        box = c["frames"][0][0]["box"]
+        assert _box_fraction(box, frames[0]) > 0.04
+
+
+def test_track_covering_most_of_the_frame_is_still_rejected(stack):
+    _, calls, frames, n = stack
+    h, w = frames[0].shape[:2]
+    side_w, side_h = int(w * 0.6 ** 0.5), int(h * 0.6 ** 0.5)  # 0.6 of the frame, frame-shaped
+    huge = (10, 10, 10 + side_w - 1, 10 + side_h - 1)
+    assert abs(_box_fraction(huge, frames[0]) - 0.6) < 0.01
+    big = {"red cube": {"color": "red", "frames": {f: {0: _rec(huge)} for f in range(n)}}}
+    r = assign(["red_block"], big, frames, n)
+    assert r["tracks"]["red_block"] is None
+    assert "of the frame" in r["candidates"]["red_block"][0]["why_not"][0]
+
+
+def _box_fraction(box, frame):
+    return (box[2] - box[0] + 1) * (box[3] - box[1] + 1) / (frame.shape[0] * frame.shape[1])

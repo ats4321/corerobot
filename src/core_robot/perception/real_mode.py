@@ -2,7 +2,9 @@
 
 Differences from the simulator path (perception.sam_tracking / perception.plausibility):
   * Plausibility uses image-relative measures only: box area as a fraction of the frame, box
-    aspect ratio, and mask colour. No simulator camera, table projection or bin size.
+    aspect ratio, and mask colour. No simulator camera, table projection or bin size. Block size
+    is judged relative to the scene: a block must be smaller than the smallest bin assigned in the
+    same clip (when bins were assigned); its absolute ceiling only rejects near-whole-frame tracks.
   * Fragment merging: instances of one SAM request with comparable sizes (median areas within
     MERGE_SIZE_RATIO) whose frame ranges overlap or are separated by at most MERGE_GAP frames, and
     which overlap in space (intersection over the smaller box >= MERGE_OVERLAP on a shared frame,
@@ -32,7 +34,13 @@ from core_robot.perception.sam_tracking import CONCEPTS, PHRASES, SAM_METADATA
 from core_robot.sim.env import OBJECTS
 
 SPEC = {o.name: o for o in OBJECTS}
-AREA_FRACTION = {"block": (0.001, 0.04), "bin": (0.03, 0.45), "mug": (0.005, 0.2)}  # of the frame area
+# Box area as a fraction of the frame area. The block ceiling is deliberately loose: how large a
+# cube appears depends on how close the camera is, which a fixed fraction cannot know (a close-up
+# fills several percent of the frame). Block size is checked against the clip's bins instead (see
+# assign); 0.25 only rejects tracks that cover a large part of the frame (the table, the whole hand
+# and arm, the background), which a tabletop demo that must also show the hand and a destination
+# cannot have for a single block.
+AREA_FRACTION = {"block": (0.001, 0.25), "bin": (0.03, 0.45), "mug": (0.005, 0.2)}
 ASPECT = (0.4, 2.5)  # box width / height
 MERGE_OVERLAP = 0.5  # intersection over the smaller box, on a shared frame or across the gap
 MERGE_GAP = 3  # frames
@@ -161,6 +169,7 @@ def assign(named: list[str], calls: dict[str, dict], frames_rgb: list[np.ndarray
                          "span": [min(fr), max(fr)]})
     order = sorted(named, key=lambda n: (SPEC[n].kind != "bin", SPEC[n].kind != "mug", n))  # bins, mug, then blocks
     taken: list[dict] = []
+    bin_areas: list[float] = []  # median box areas of the bins assigned so far (bins come first)
     tracks, report = {}, {}
     for name in order:
         kind, color = SPEC[name].kind, SPEC[name].color
@@ -173,6 +182,9 @@ def assign(named: list[str], calls: dict[str, dict], frames_rgb: list[np.ndarray
             f0 = min(c["frames"])
             rec = c["frames"][f0]
             ok, why = plausible_real(name, rec["box"], rec.get("mask"), frames_rgb[f0])
+            if kind == "block" and bin_areas and c["area"] >= min(bin_areas):
+                ok, why = False, why + [f"median box area {c['area']:.0f} px is not smaller than the smallest "
+                                        f"assigned bin ({min(bin_areas):.0f} px)"]
             cands.append({**{k: c[k] for k in ("phrase", "id", "span", "area")}, "plausible": ok, "why_not": why,
                           "_c": c})
         ok_cands = [c for c in cands if c["plausible"]]
@@ -182,6 +194,8 @@ def assign(named: list[str], calls: dict[str, dict], frames_rgb: list[np.ndarray
             continue
         pick = (min if kind == "block" else max)(ok_cands, key=lambda c: c["area"])["_c"]
         taken.append(pick)
+        if kind == "bin":
+            bin_areas.append(pick["area"])
         fr = pick["frames"]
         tracks[name] = {
             "name": name, "concept": pick["phrase"], "source": "video", "object_id": pick["id"],
