@@ -137,7 +137,7 @@ sed -i '' '/#define fdopen(fd, mode) NULL/d' /tmp/pyb/pybullet-3.2.7/examples/Th
 .venv/bin/pip wheel --no-deps -w /tmp/pyb/wheels /tmp/pyb/pybullet-3.2.7   # a few minutes
 ```
 
-Then pass `--find-links /tmp/pyb/wheels` to the install above. On Linux, `pip install pybullet`
+Then pass `--find-links /tmp/pyb/wheels` to the install above. On Linux (untested), `pip install pybullet`
 usually works directly.
 
 ## Run
@@ -152,13 +152,25 @@ usually works directly.
 
 ### Without an API key
 
-- Works: the full test suite (fake API transport and recorded SAM responses from the two synthetic
+Replay the two synthetic (AI-generated) clips from the committed response cache: $0, no API key,
+reproduces the committed results (same tracks and plan, `plan_matches_clip: True`, simulator success
+on attempt 1):
+
+```bash
+CORE_ROBOT_REPLAY=1 .venv/bin/python scripts/run_real_demo.py data/real/synthetic_sort_red_blue.mp4
+CORE_ROBOT_REPLAY=1 .venv/bin/python scripts/run_real_demo.py data/real/synthetic_stack_blue_on_red.mp4
+```
+
+Outputs (overlay, plan, generated code, simulator video) go to `data/runs/real/<clip>/`.
+
+- Also works: the full test suite (fake API transport and recorded SAM responses from the two synthetic
   clips in `tests/fixtures/`), the UI's demo browser (`data/demos/`), cost estimates
   (`--dry-run`, e.g. `scripts/run_real_demo.py data/demos/t1_red_in_red_bin/seed_0/video.mp4 --dry-run`),
   and the recorded outputs in [docs/media/](docs/media/).
-- Not in a fresh clone: evaluation run logs (`data/runs/`), the response cache (`data/cache/`) and
-  the clips in `data/real/` are gitignored. The UI's "Evaluation run set" list is therefore empty, and
-  `CORE_ROBOT_REPLAY=1` stops with `ReplayMiss: ... not in cache` until a cache is present.
+- Not in a fresh clone: evaluation run logs (`data/runs/`) and the rest of the response cache
+  (`data/cache/`) are gitignored; only the 12 responses for the two clips above are committed. The
+  UI's "Evaluation run set" list is therefore empty, and `CORE_ROBOT_REPLAY=1` on any other clip stops
+  with `ReplayMiss: ... not in cache`.
 - Without a key, live commands stop before any call with `MODEL_API_KEY is not set`.
 
 ### Running on your own clip (costs money)
@@ -167,13 +179,16 @@ API calls are billed. Always look at the estimate first, and set a hard budget:
 
 ```bash
 .venv/bin/python scripts/run_real_demo.py data/real/<clip>.mp4 --footage real --dry-run      # estimate only, no API call
-.venv/bin/python scripts/run_real_demo.py data/real/<clip>.mp4 --footage real --budget 0.5   # live; hard cap in USD
+.venv/bin/python scripts/run_real_demo.py data/real/<clip>.mp4 --footage real --budget 1.0   # live; hard cap in USD
 ```
 
 The budget guard reserves each call's worst-case cost before sending, so `--budget` is a hard cap.
+The default `--budget 0.5` is below the worst-case estimate (about $0.75 for the two clips), so the
+guard can stop a live run partway; use `--budget 1.0` for live runs.
 Responses are cached by request hash; `CORE_ROBOT_REPLAY=1` serves only from the cache (no spend).
 If `data/real/<clip>.expected_plan.json` exists, the run also reports `plan_matches_clip`. Outputs go
-to `data/runs/real/<clip>/` (gitignored). Clips in `data/real/` are gitignored.
+to `data/runs/real/<clip>/` (gitignored). Clips you add to `data/real/` are gitignored; only the two
+synthetic clips are committed ([data/real/README.md](data/real/README.md)).
 
 Other entry points: `scripts/sam_gate.py`, `scripts/eval_planner.py`,
 `python -m core_robot.eval.run_eval --generator muse --dry-run` (simulator evaluation),
@@ -185,7 +200,8 @@ Other entry points: `scripts/sam_gate.py`, `scripts/eval_planner.py`,
 src/core_robot/   simulator, primitives, perception, planner, code generation, repair, eval, UI
 tests/            offline tests (fake API transport + recorded SAM fixtures)
 data/demos/       scripted simulator demos (videos, plans) used by tests and evaluation
-data/real/        expected plans for the synthetic clips (the clips themselves are not committed)
+data/real/        the two synthetic (AI-generated) clips and their expected plans
+data/cache/model/ the 12 cached model responses the two clips replay from
 data/samples/     synthetic placeholder images/videos drawn by scripts/make_placeholder_samples.py
 docs/             findings, perturbation pilot, media (all synthetic footage is labelled)
 ```

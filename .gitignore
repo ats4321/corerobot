@@ -6,6 +6,22 @@
 # Generated data (keep the directories)
 data/cache/*
 !data/cache/.gitkeep
+# Replay fixtures: only the 12 model responses that the two synthetic clips replay from
+# (CORE_ROBOT_REPLAY=1 scripts/run_real_demo.py data/real/synthetic_*.mp4; see README)
+!data/cache/model/
+data/cache/model/*
+!data/cache/model/b13769775b55ec9f949af7819bac6dc9ff0b1fa733d1394a627782a8d41f8781.json
+!data/cache/model/04c6b0e5bb523cd20a2b10bccd513de1e31f669dee67b79ceae2a5954d324b89.json
+!data/cache/model/809c2fa2ed59816812b5db7ede8805e3d873fcabde73df0517a1733ad39d3920.json
+!data/cache/model/94ef19b3ae5d021018e444a6329ba77d52f3a8488bb1154690958006cce7a6a2.json
+!data/cache/model/08952843994222260e741c385a101141db3f682a1ddf41fa0c0de996b66d5b77.json
+!data/cache/model/9e05eee95b100d38c6cb0a3b37a00b0231921c5c08112eea1f47d1a9e8b3d2cc.json
+!data/cache/model/412bc8b6ad339748a2050501016b01db2183fc3b93c2abeedba3e5bc32a81d6e.json
+!data/cache/model/c4be27120c033b3080940f88db6e34d3bce7d02691e663d04a76702e98af4779.json
+!data/cache/model/95e1fb1d3347b86a010cd41194dc56953c37b56f1f93a822bfa6e8c1e4050712.json
+!data/cache/model/f6968d28ab48fc53862b7ca23cb28d304c8b76ada918e9c2bcf7109e7ef449b8.json
+!data/cache/model/47d8b3af6914a5a59d041afc4f24c9a8fa85bff596cca01399576e16c98cd7db.json
+!data/cache/model/2423555caf06d1932aade5544940c3f6dea50dee8feed919bae6a57907149017.json
 data/runs/*
 !data/runs/.gitkeep
 
@@ -20,3 +36,7 @@ __pycache__/
 data/real/*
 !data/real/.gitkeep
 !data/real/*.expected_plan.json
+# The two AI-generated (synthetic) clips used by the replay fixtures
+!data/real/README.md
+!data/real/synthetic_sort_red_blue.mp4
+!data/real/synthetic_stack_blue_on_red.mp4

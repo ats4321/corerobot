@@ -8,7 +8,7 @@ demo video -> SAM 3.1 segments and tracks objects -> Muse Spark turns video + ma
 
 ## Project goal
 
-Show that Meta's models can reason about physical tasks, measured as task success rate with and without the repair loop over 8 tasks x 5 seeded layouts x 3 conditions (A one-shot, B repair with text report, C repair with text report plus rendered frame).
+Test whether Meta's models can reason about physical tasks well enough to learn a task from one demonstration video, measured as task success rate with and without the repair loop over 8 tasks x 5 seeded layouts x 3 conditions (A one-shot, B repair with text report, C repair with text report plus rendered frame).
 
 ## Hard rules
 
@@ -31,7 +31,3 @@ Via Meta Model API (OpenAI-compatible, base URL https://api.meta.ai/v1, key in e
 
 - muse-spark-1.3 for planning and code
 - sam-3.1 for segmentation
-
-## Deadline
-
-Submission deadline: Nov 4.
