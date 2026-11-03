@@ -72,8 +72,11 @@ Two clips, one run per configuration: **not a success rate.**
 |---|---|---|
 | ![sort overlay](docs/media/synthetic_sort_overlay.png) | ![stack overlay](docs/media/synthetic_stack_overlay.png) | ![simulator](docs/media/sim_from_synthetic_stack_attempt1.png) |
 
-The small `red_block` box in the sort overlay is a ghost fragment of the cube merged into its track
-(a generation artifact; see [docs/findings_real_v1.md](docs/findings_real_v1.md)).
+The small `red_block` box in the sort overlay is a fragment, not the whole cube. Once the hand picks
+the cube up, SAM's original cube track (id 1) shrinks to a sliver, and a second instance (id 2) boxes
+the cube in the hand. Real mode merges the two into one track, but on frames where both exist it keeps
+the record of the piece seen on more frames (id 1), so the overlay draws the sliver. See
+[docs/findings_real_v1.md](docs/findings_real_v1.md).
 More in [docs/media/](docs/media/) (overlay and simulator clips; every file is labelled).
 
 ### Spend
@@ -114,15 +117,17 @@ hits are free).
 ## Setup
 
 Tested on **macOS arm64 with Python 3.12** (`requirements.txt` pins exact versions from that
-machine; Python >= 3.10 is required). On Apple silicon use an arm64 Python:
-`python3.12 -c "import platform; print(platform.machine())"` should print `arm64`.
+machine; Python >= 3.10 is required). On Apple silicon use an arm64 Python: the `python3.12` on
+your PATH may be an x86_64 build (Rosetta or an old installer), which fails with "bad CPU type" or
+picks up x86 wheels. Check with
+`python3.12 -c "import platform; print(platform.machine())"`; it should print `arm64`.
 
 ```bash
 python3.12 -m venv .venv
 # build the pybullet wheel first (next section), then:
 .venv/bin/pip install --find-links /tmp/pyb/wheels -r requirements.txt
 .venv/bin/pip install -e .
-cp .env.example .env          # only for live API calls: put your key after MODEL_API_KEY= (.env is gitignored)
+cp .env.example .env          # optional, only for live API calls: put your key after MODEL_API_KEY= (.env is gitignored)
 ```
 
 ### pybullet on macOS
@@ -169,9 +174,12 @@ Outputs (overlay, plan, generated code, simulator video) go to `data/runs/real/<
   and the recorded outputs in [docs/media/](docs/media/).
 - Not in a fresh clone: evaluation run logs (`data/runs/`) and the rest of the response cache
   (`data/cache/`) are gitignored; only the 12 responses for the two clips above are committed. The
-  UI's "Evaluation run set" list is therefore empty, and `CORE_ROBOT_REPLAY=1` on any other clip stops
-  with `ReplayMiss: ... not in cache`.
-- Without a key, live commands stop before any call with `MODEL_API_KEY is not set`.
+  UI's "Evaluation run set" list is therefore empty, and `CORE_ROBOT_REPLAY=1` on any other clip
+  (an empty cache for that clip) stops at the first uncached request with
+  `ReplayMiss: request <key> for <model> not in cache (CORE_ROBOT_REPLAY=1)`.
+- Without a key, `scripts/run_real_demo.py` stops before any call with
+  `MODEL_API_KEY is not set (or use CORE_ROBOT_REPLAY=1)`. Other live scripts stop with
+  `RuntimeError: MODEL_API_KEY is not set (put it in .env at the repo root)`.
 
 ### Running on your own clip (costs money)
 

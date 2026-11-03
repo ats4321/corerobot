@@ -79,7 +79,7 @@ simulator state (never from asking a model). Source logs: `data/runs/eval/muse_p
 | SAM 3.1 | $0.0002 per video frame (min 50 per request); $0.0025 per image |
 
 Total API spend to 2026-10-28: **$3.73** (from the call log; cache hits are free). The project total,
-including the later synthetic-clip runs, is in the README.
+including the later synthetic-clip runs, is **$3.915** (see the README).
 
 ## Budget overshoot and fix
 
