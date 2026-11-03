@@ -1,0 +1,12 @@
+{
+ "clip": "synthetic_stack_blue_on_red.mp4",
+ "footage": "synthetic (AI-generated, not real footage)",
+ "labelled_by": "hand, written blind from the user's description before the clip was seen or run",
+ "description": "A hand places a blue cube on top of a red cube.",
+ "steps": [
+  {"action": "pick_and_place", "object": "blue_block", "destination": "red_block"}
+ ],
+ "goal": [
+  {"subject": "blue_block", "relation": "on", "target": "red_block"}
+ ]
+}
