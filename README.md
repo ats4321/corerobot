@@ -39,11 +39,16 @@ for every run. Details: [docs/findings_v1.md](docs/findings_v1.md),
 
 ### Simulator demos (8 tasks x 5 seeds, plans predicted from the demo video)
 
+The demo videos (`data/demos/`, 10 videos: one per task, plus a second seed for t2 and t5) are
+rendered by PyBullet from a scripted demonstrator, not filmed. Each task's plan is predicted from its
+seed-0 demo, then executed on 5 new seeded layouts; success is judged against the task's true goal
+for that layout.
+
 | Measure | Result |
 |---|---|
 | Planner, strict match with the ground-truth plan (10 demo videos) | **9/10** (lenient, goal atoms only: 9/10) |
 | SAM gate (every block and bin found and tracked, 10 demo videos) | **10/10** |
-| Clean environment, A / B / C | **36/40 / 40/40 / 40/40** |
+| Clean environment | **A 36/40, B 40/40, C 40/40** |
 | Perturbed environment (4 cm release offset), A | **21/40** |
 | Perturbed environment, B and C | **incomplete**: 38 of 80 runs ran before the budget stop; **0 of 9** repairable runs fixed in B and **0 of 9** in C |
 
@@ -67,6 +72,8 @@ Two clips, one run per configuration: **not a success rate.**
 |---|---|---|
 | ![sort overlay](docs/media/synthetic_sort_overlay.png) | ![stack overlay](docs/media/synthetic_stack_overlay.png) | ![simulator](docs/media/sim_from_synthetic_stack_attempt1.png) |
 
+The small `red_block` box in the sort overlay is a ghost fragment of the cube merged into its track
+(a generation artifact; see [docs/findings_real_v1.md](docs/findings_real_v1.md)).
 More in [docs/media/](docs/media/) (overlay and simulator clips; every file is labelled).
 
 ### Spend
@@ -85,6 +92,8 @@ hits are free).
   (e.g. "green_block in red_bin"), which reveals the selection rule the plan lacked. This is repair
   working from information in the report, not evidence that the planner understood the demo.
 - **t5_line_up seed 0 is a known planner failure.** The plan adds a step "blue_block -> red_block".
+  The step is intermediate (the blue block is moved to the line afterwards), so the final state still
+  meets the line-up goal and t5 scores 5/5 in every clean condition despite the wrong plan.
 - **The plan did not depend on the track text.** In the ablation on the sort clip, correct tracks, the
   wrong tracks of the first run, and no tracks at all gave the same correct plan. One clip, one sample
   per variant.
@@ -105,13 +114,15 @@ hits are free).
 ## Setup
 
 Tested on **macOS arm64 with Python 3.12** (`requirements.txt` pins exact versions from that
-machine; Python >= 3.10 is required).
+machine; Python >= 3.10 is required). On Apple silicon use an arm64 Python:
+`python3.12 -c "import platform; print(platform.machine())"` should print `arm64`.
 
 ```bash
 python3.12 -m venv .venv
-.venv/bin/pip install --find-links <dir-with-pybullet-wheel> -r requirements.txt   # see pybullet note
+# build the pybullet wheel first (next section), then:
+.venv/bin/pip install --find-links /tmp/pyb/wheels -r requirements.txt
 .venv/bin/pip install -e .
-cp .env.example .env          # then put your key after MODEL_API_KEY= (.env is gitignored)
+cp .env.example .env          # only for live API calls: put your key after MODEL_API_KEY= (.env is gitignored)
 ```
 
 ### pybullet on macOS
@@ -132,12 +143,23 @@ usually works directly.
 ## Run
 
 ```bash
-# tests: offline, no API key, no spend (about 2 minutes)
+# tests: offline, no API key, no spend (2-3 minutes)
 .venv/bin/pytest -q
 
 # UI: browse the demos and run logs; the "Run on your own video" section can call the API
 .venv/bin/python -m core_robot.ui.app        # http://127.0.0.1:7860
 ```
+
+### Without an API key
+
+- Works: the full test suite (fake API transport and recorded SAM responses from the two synthetic
+  clips in `tests/fixtures/`), the UI's demo browser (`data/demos/`), cost estimates
+  (`--dry-run`, e.g. `scripts/run_real_demo.py data/demos/t1_red_in_red_bin/seed_0/video.mp4 --dry-run`),
+  and the recorded outputs in [docs/media/](docs/media/).
+- Not in a fresh clone: evaluation run logs (`data/runs/`), the response cache (`data/cache/`) and
+  the clips in `data/real/` are gitignored. The UI's "Evaluation run set" list is therefore empty, and
+  `CORE_ROBOT_REPLAY=1` stops with `ReplayMiss: ... not in cache` until a cache is present.
+- Without a key, live commands stop before any call with `MODEL_API_KEY is not set`.
 
 ### Running on your own clip (costs money)
 

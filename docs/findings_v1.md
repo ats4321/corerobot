@@ -78,7 +78,8 @@ simulator state (never from asking a model). Source logs: `data/runs/eval/muse_p
 | Repair generation | $0.030 (avg 6,395 out tokens; up to the 12,000 cap) |
 | SAM 3.1 | $0.0002 per video frame (min 50 per request); $0.0025 per image |
 
-Total API spend to date: **$3.73** (from the call log; cache hits are free).
+Total API spend to 2026-10-28: **$3.73** (from the call log; cache hits are free). The project total,
+including the later synthetic-clip runs, is in the README.
 
 ## Budget overshoot and fix
 
