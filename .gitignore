@@ -1,5 +1,7 @@
-# Secrets
+# Secrets (.env.example is committed; it holds no value)
 .env
+.env.*
+!.env.example
 
 # Generated data (keep the directories)
 data/cache/*
