@@ -25,6 +25,10 @@ data/cache/model/*
 data/runs/*
 !data/runs/.gitkeep
 
+# Local scratch and OS files
+.context/
+.DS_Store
+
 # Python
 __pycache__/
 *.pyc
